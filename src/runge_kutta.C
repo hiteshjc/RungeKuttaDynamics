@@ -176,7 +176,7 @@ void time_evolve(   double spin, double deltat,
 							 Jmat23, Jmat32, Jnnn, bond_disorder_matrix, ijkt);
 	
 		double time=double(intt)*deltat;
-		cout<<"Time = "<<time<<" S(0)S(t) = "<<(config0x[0]*configx[0])+(config0y[0]*configy[0])+(config0z[0]*configz[0])<<"  E = "<<boost::format("%+ .10f") %energyj<<endl;
+		//cout<<"Time = "<<boost::format("%+ .5f") %time<<" S(0)S(t) = "<<boost::format("%+ .10f") %((config0x[0]*configx[0])+(config0y[0]*configy[0])+(config0z[0]*configz[0]))<<"  E = "<<boost::format("%+ .10f") %energyj<<endl;
 		// Print configuration of spins along with coordinates
 		if (intt==0)
 		{
@@ -188,6 +188,7 @@ void time_evolve(   double spin, double deltat,
 				cout<<boost::format("%+ .10f  %+ .10f  %+ .10f  %+ .10f   %+ .10f   %+ .10f  %+ .10f") %x %y %z %sx %sy %sz %norm<<endl;
 			}
 		}
+		cout<<"Time = "<<boost::format("%+ .5f") %time<<" S(0)S(t) = "<<boost::format("%+ .10f") %((config0x[0]*configx[0])+(config0y[0]*configy[0])+(config0z[0]*configz[0]))<<"  E = "<<boost::format("%+ .10f") %energyj<<endl;
 		//cout<<endl;
 
 		fourier_transforms(spin,phases,config0x,config0y,config0z,sxtq,sytq,sztq);

@@ -1424,7 +1424,7 @@ void mc_pyrochlore_get_thermal_config_and_time_evolve(double spin, double deltat
 				infos[b].mx+=mxdiff;infos[b].my+=mydiff;infos[b].mz+=mzdiff;
 				// ediff=0 by construction!!
 			}
-			if (n%nsites==0 or n==nburn+nsamples-1) cout<<boost::format("%+ .5f") %infos[0].energy<<endl;
+			if (n%nsites==0 or n==nburn+nsamples-1) cout<<boost::format("%+ .10f") %infos[0].energy<<endl;
 		} // End nsamples and i.e. MC run
 		cout<<"========================================================"<<endl;
 		cout<<endl;
@@ -1437,7 +1437,9 @@ void mc_pyrochlore_get_thermal_config_and_time_evolve(double spin, double deltat
 		time(&end);
 		double seconds=difftime(end,start);
 		cout<<"Done with run "<<nstart<<" in  "<<seconds<<" seconds"<<endl;
-	}  // End nstarts
+		cout<<"======================================================================================================================================="<<endl;
+		cout<<endl;
+        }  // End nstarts
 	
         savg.average();
 	for (int om=0; om<numomegas;om++)
