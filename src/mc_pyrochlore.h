@@ -29,11 +29,21 @@ void fourier_transforms(double spin,Matrix &phases,
 			std::vector<complex<double> > &syq,
 			std::vector<complex<double> > &szq);
 
-void mc_pyrochlore_get_thermal_config_and_time_evolve(double spin, double deltat, double omega, double tottime, int L,int64_t nsamples, int64_t nburn, string start_config, 
+void mc_pyrochlore_get_thermal_config_and_spin_wave(double spin,
+		  int L, int nstarts, int64_t nsamples, int64_t nburn, string start_config, 
 		   string mcmove, double temp, int ntemps, double hx, double hy, double hz, 
 		   double J1, double J2, double J3, double J4, double Jnnn,
 		   double disorder_strength,
-		   double gxy, double gz, STensor &smunu); 
+		   double gxy, double gz); 
+
+void mc_pyrochlore_get_thermal_config_and_time_evolve(double spin, double deltat, 
+		   double omegamin, double omegamax, double omegaspacing, 
+		   double tottime, int L, int nstarts, int64_t nsamples, int64_t nburn, 
+		   string start_config, 
+		   string mcmove, double temp, int ntemps, double hx, double hy, double hz, 
+		   double J1, double J2, double J3, double J4, double Jnnn,
+		   double disorder_strength,
+		   double gxy, double gz); 
 
 void mc_pyrochlore_ptall(double spin, int L,int64_t nsamples, int64_t nburn, string start_config, 
 		   string mcmove, double tminKelvin, double tmaxKelvin, int ntemps, double hx, double hy, double hz, 

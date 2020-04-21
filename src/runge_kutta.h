@@ -4,8 +4,8 @@
 #include"global.h"
 #include"math_utilities.h"
 
-void time_evolve(   double spin, double deltat, 
-		    double omega, double tottime, int L,
+void time_evolve(   double spin, double deltat,
+		    double tottime, int L, 
 		    std::vector<double> &configx, 
 		    std::vector<double> &configy, 
 		    std::vector<double> &configz, 
@@ -19,6 +19,10 @@ void time_evolve(   double spin, double deltat,
 		    RMatrix &Jmat23, RMatrix &Jmat32,
 		    double &Jnnn, RMatrix &bond_disorder_matrix,
 		    std::vector< std::vector<double> > &fullcoords,
-		    std::vector< std::vector<int> > & ijkt, STensor &smunu);
-		   
+		    std::vector< std::vector<int> >   & ijkt, 
+		    std::vector<std::vector<double> > & qvals,
+		    Matrix 			      & phases,
+		    std::vector<double> 	      & omegas, 
+		    STensor 			      & smunu);
+
 #endif

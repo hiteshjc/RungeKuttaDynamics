@@ -210,7 +210,7 @@ int main(int argc, char *argv[])
     }
     else
     {   // replica MC
-    	mc_pyrochlore_get_thermal_config_from_replica_and_time_evolve(spin, deltat, omegamin, omegamax, omegaspacing, tottime, L, nstarts, nsamples,nburn,start_config,mcmove,temp,nreplicas, hx,hy,hz,J1,J2,J3,J4,Jnnn,disorder_strength,gxy,gz);
+    	//mc_pyrochlore_get_thermal_config_from_replica_and_time_evolve(spin, deltat, omegamin, omegamax, omegaspacing, tottime, L, nstarts, nsamples,nburn,start_config,mcmove,temp,nreplicas, hx,hy,hz,J1,J2,J3,J4,Jnnn,disorder_strength,gxy,gz);
     }
 }
 
