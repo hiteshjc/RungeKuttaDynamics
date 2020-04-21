@@ -141,9 +141,13 @@ int main(int argc, char *argv[])
     if (deltatfound){deltat=str_to_d(str_ret);} else{deltat=0.01;}
     
     bool   omegafound;
-    double omega;
-    search_for(string("omega"),filename,str_ret, omegafound);
-    if (omegafound){omega=str_to_d(str_ret);} else{omega=0.00;}
+    double omegamin,omegamax, omegaspacing;
+    search_for(string("omegamin"),filename,str_ret, omegafound);
+    if (omegafound){omegamin=str_to_d(str_ret);} else{omegamin=0.00;}
+    search_for(string("omegamax"),filename,str_ret, omegafound);
+    if (omegafound){omegamax=str_to_d(str_ret);} else{omegamax=15.00;}
+    search_for(string("omegaspacing"),filename,str_ret, omegafound);
+    if (omegafound){omegaspacing=str_to_d(str_ret);} else{omegaspacing=0.10;}
    
    
     bool tminfound,tmaxfound; 
@@ -196,41 +200,18 @@ int main(int argc, char *argv[])
     cout<<"st_config 		= "<<start_config<<endl;    
     cout<<"measure   		= "<<measure_corrs<<endl; 
     cout<<"deltat  (meV)^-1	= "<<deltat<<endl; 
-    cout<<"omega (meV)   	= "<<omega<<endl; 
-    cout<<"Tot-time (meV)^-1   	= "<<tottime<<endl; 
-    int numprocs=nstarts;
-    STensor savg,smunu;
-    for (int i=0;i<numprocs;i++)
-    {
-	time(&start);
-	mc_pyrochlore_get_thermal_config_and_time_evolve(spin, deltat, omega, tottime, L, nsamples,nburn,start_config,mcmove,temp,nreplicas, hx,hy,hz,J1,J2,J3,J4,Jnnn,disorder_strength,gxy,gz,smunu);
-	if (i>0) savg.update_totals(smunu);
-	else	 { savg.init(int(smunu.qvals.size())); savg.copy(smunu);}
-	time(&end);
-	double seconds=difftime(end,start);
-    	cout<<"Done with run "<<i<<" in  "<<seconds<<" seconds"<<endl;
+    cout<<"omegamin (meV)   	= "<<omegamin<<endl; 
+    cout<<"omegamax (meV)   	= "<<omegamax<<endl; 
+    cout<<"omegaspacing (meV)   = "<<omegaspacing<<endl; 
+    cout<<"Tot-time (meV)^-1   	= "<<tottime<<endl;
+    if (nreplicas==1)
+    {   // serial MC 
+    	mc_pyrochlore_get_thermal_config_and_time_evolve(spin, deltat, omegamin, omegamax, omegaspacing, tottime, L, nstarts, nsamples,nburn,start_config,mcmove,temp,nreplicas, hx,hy,hz,J1,J2,J3,J4,Jnnn,disorder_strength,gxy,gz);
     }
-    savg.average();
-    
-    int numqs=int(savg.qvals.size());
-    cout<<"======================================================================================================================================="<<endl;
-    cout<<"                                              AVERAGED DATA                                                                            "<<endl;
-    cout<<"======================================================================================================================================="<<endl;
-    cout<<" h      k      l     SXX(Q)    SXY(Q)    SXZ(Q)    SYX(Q)     SYY(Q)     SYZ(Q)     SZX(Q)     SZY(Q)     SZZ(Q)          Sperp(Q)     "<<endl;
-    cout<<"======================================================================================================================================="<<endl;
-    for (int i=0;i<numqs;i++)
-    {
-	double qx=savg.qvals[i][0];double qy=savg.qvals[i][1];double qz=savg.qvals[i][2];
-	complex<double> sxx=savg.sxx[i];complex<double> syy=savg.syy[i];complex<double> szz=savg.szz[i];
-	
-	complex<double> sxy=savg.sxy[i];complex<double> syx=savg.syx[i];
-	complex<double> sxz=savg.sxz[i];complex<double> szx=savg.szx[i];
-	complex<double> syz=savg.syz[i];complex<double> szy=savg.szy[i];
-	complex<double> sperp=savg.sperp[i];
-	
-	cout<<boost::format("%+ .5f  %+ .5f  %+ .5f  %+ .8f   %+ .8f   %+ .8f   %+ .8f   %+ .8f   %+ .8f  %+ .8f  %+ .8f %+ .8f  %+ .8f") %qx %qy %qz %sxx %sxy %sxz %syx %syy %syz %szx %szy %szz %sperp<<endl;
-   }				
-
+    else
+    {   // replica MC
+    	mc_pyrochlore_get_thermal_config_from_replica_and_time_evolve(spin, deltat, omegamin, omegamax, omegaspacing, tottime, L, nstarts, nsamples,nburn,start_config,mcmove,temp,nreplicas, hx,hy,hz,J1,J2,J3,J4,Jnnn,disorder_strength,gxy,gz);
+    }
 }
 
-/////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////

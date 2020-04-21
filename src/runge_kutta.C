@@ -97,7 +97,7 @@ void cross_product(double spin, double sx, double sy, double sz, double eff_fiel
 // This initial configuration can be anything - but we will typically choose something from a thermal distribution
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 void time_evolve(   double spin, double deltat,
-		    double omega, double tottime, int L, 
+		    double tottime, int L, 
 		    std::vector<double> &configx, 
 		    std::vector<double> &configy, 
 		    std::vector<double> &configz, 
@@ -111,43 +111,35 @@ void time_evolve(   double spin, double deltat,
 		    RMatrix &Jmat23, RMatrix &Jmat32,
 		    double &Jnnn, RMatrix &bond_disorder_matrix,
 		    std::vector< std::vector<double> > &fullcoords,
-		    std::vector< std::vector<int> > & ijkt, STensor &smunu)
+		    std::vector< std::vector<int> >   & ijkt, 
+		    std::vector<std::vector<double> > & qvals,
+		    Matrix 			      & phases,
+		    std::vector<double> 	      & omegas, 
+		    STensor 			      & smunu)
 {
-	int nsites=configx.size();
-	std::vector<complex<double> > sxtot,sytot, sztot;
-	std::vector<complex<double> > sxtq,sx0q;
-	std::vector<complex<double> > sytq,sy0q;
-	std::vector<complex<double> > sztq,sz0q;
-
-	std::vector<complex<double> > sxsxtot, sxsytot, sxsztot;
-	std::vector<complex<double> > sysxtot, sysytot, sysztot;
-	std::vector<complex<double> > szsxtot, szsytot, szsztot;
-	std::vector<std::vector<double> > qvals; 
-	Matrix 				  phases; 
-
-	time_t start,end; 
-	time (&start);	
-	make_qs(L,qvals);
 	int numqs=qvals.size();
-	make_phases(fullcoords, qvals,phases);
-	time (&end);	
-	double seconds=difftime(end,start);
-    	cout<<"Time to make q, phases = "<<seconds<<" seconds"<<endl;
+	int nsites=configx.size();
+	int numomegas=omegas.size();
+      
+	smunu.init(numqs,numomegas);
+      	smunu.qvals=qvals;
+      	smunu.omegas=omegas;
 
-	sxtot.resize(numqs);sytot.resize(numqs);sztot.resize(numqs);	
-	sx0q.resize(numqs);sy0q.resize(numqs);sz0q.resize(numqs);	
+	std::vector< std::vector<complex<double> > > sxtot, sytot, sztot;
+	std::vector<complex<double> > 		     sxtq,  sytq,  sztq;
+
 	sxtq.resize(numqs);sytq.resize(numqs);sztq.resize(numqs);	
-        sxsxtot.resize(numqs);sxsytot.resize(numqs);sxsztot.resize(numqs);
-	sysxtot.resize(numqs);sysytot.resize(numqs);sysztot.resize(numqs);
-	szsxtot.resize(numqs);szsytot.resize(numqs);szsztot.resize(numqs);
-
-	#pragma omp parallel for
-	for (int nq=0;nq<numqs;nq++)
+	for (int om=0; om<numomegas; om++)
 	{
-		sxtot[nq]=0.0;sytot[nq]=0.0;sztot[nq]=0.0;
-		sxsxtot[nq]=0.0;sxsytot[nq]=0.0;sxsztot[nq]=0.0;
-		sysxtot[nq]=0.0;sysytot[nq]=0.0;sysztot[nq]=0.0;
-		szsxtot[nq]=0.0;szsytot[nq]=0.0;szsztot[nq]=0.0;
+		sxtot.push_back(std::vector< complex<double> >());
+		sytot.push_back(std::vector< complex<double> >());
+		sztot.push_back(std::vector< complex<double> >());
+		sxtot[om].resize(numqs);sytot[om].resize(numqs);sztot[om].resize(numqs);	
+		#pragma omp parallel for
+		for (int nq=0;nq<numqs;nq++) 
+		{
+			sxtot[om][nq]=0.0;sytot[om][nq]=0.0;sztot[om][nq]=0.0;
+		}
 	}
 
 	// 4th order Runge-Kutta intermediate vectors
@@ -174,38 +166,45 @@ void time_evolve(   double spin, double deltat,
 	tottime=double(numtimes)*deltat;
 	for (int intt=0;intt<numtimes;intt++)
 	{
-		/*double energyj=total_j_energy(spin, config0x,config0y,config0z,
+		double energyj=total_j_energy(spin, config0x,config0y,config0z,
 							 neighbors,nneighbors,
 							 Jmat01, Jmat10, 
 							 Jmat02, Jmat20, 
 							 Jmat03, Jmat30, 
 							 Jmat12, Jmat21, 
 							 Jmat13, Jmat31, 
-							 Jmat23, Jmat32, Jnnn, bond_disorder_matrix, ijkt);*/
+							 Jmat23, Jmat32, Jnnn, bond_disorder_matrix, ijkt);
 	
 		double time=double(intt)*deltat;
-		//cout<<"Time = "<<time<<" S(0)S(t) = "<<(config0x[0]*configx[0])+(config0y[0]*configy[0])+(config0z[0]*configz[0])<<"  E = "<<energyj<<endl;
+		cout<<"Time = "<<time<<" S(0)S(t) = "<<(config0x[0]*configx[0])+(config0y[0]*configy[0])+(config0z[0]*configz[0])<<"  E = "<<boost::format("%+ .10f") %energyj<<endl;
 		// Print configuration of spins along with coordinates
-		/*for (int i=0;i<1;i++)
+		if (intt==0)
 		{
-			double x=fullcoords[i][0]; double y=fullcoords[i][1]; double z=fullcoords[i][2];
-			double sx=config0x[i]; double sy=config0y[i]; double sz=config0z[i];
-			double norm=(sx*sx) + (sy*sy) + (sz*sz);
-			cout<<boost::format("%+ .10f  %+ .10f  %+ .10f  %+ .10f   %+ .10f   %+ .10f  %+ .10f") %x %y %z %sx %sy %sz %norm<<endl;
-		}*/
-		//cout<<endl;
-		fourier_transforms(spin,phases,config0x,config0y,config0z,sxtq,sytq,sztq);
-
-		double omegat=omega*time;
-		complex<double> timephase=complex<double>(cos(omegat),sin(omegat))*(deltat/tottime);	
-
-		#pragma omp parallel for
-		for (int nq=0;nq<numqs;nq++)
-		{
-			sxtot[nq]+=(sxtq[nq]*timephase);
-			sytot[nq]+=(sytq[nq]*timephase);
-			sztot[nq]+=(sztq[nq]*timephase);
+			for (int i=0;i<nsites;i++)
+			{
+				double x=fullcoords[i][0]; double y=fullcoords[i][1]; double z=fullcoords[i][2];
+				double sx=config0x[i]; double sy=config0y[i]; double sz=config0z[i];
+				double norm=(sx*sx) + (sy*sy) + (sz*sz);
+				cout<<boost::format("%+ .10f  %+ .10f  %+ .10f  %+ .10f   %+ .10f   %+ .10f  %+ .10f") %x %y %z %sx %sy %sz %norm<<endl;
+			}
 		}
+		//cout<<endl;
+
+		fourier_transforms(spin,phases,config0x,config0y,config0z,sxtq,sytq,sztq);
+		
+		for (int om=0; om<numomegas; om++)
+		{
+			double omegat=omegas[om]*time;
+			complex<double> timephase=complex<double>(cos(omegat),sin(omegat))*(deltat/tottime);	
+			#pragma omp parallel for
+			for (int nq=0;nq<numqs;nq++)
+			{
+				sxtot[om][nq]+=(sxtq[nq]*timephase);
+				sytot[om][nq]+=(sytq[nq]*timephase);
+				sztot[om][nq]+=(sztq[nq]*timephase);
+			}
+	        }
+
 		///////////////////////////////////////////////////////////
 		// 1 st step of Runge Kutta - get k1
 		double sign=-1.0;
@@ -311,53 +310,52 @@ void time_evolve(   double spin, double deltat,
 			config0z[i]+=((deltat/6.0)*(k1z[i]+(2.0*k2z[i])+(2.0*k3z[i])+k4z[i]));
 		}
       }
-	
-      #pragma omp parallel for
-      for (int nq=0;nq<numqs;nq++) 
-      {
-		sxsxtot[nq]=sxtot[nq]*conj(sxtot[nq])/double(nsites);
-		sxsytot[nq]=sxtot[nq]*conj(sytot[nq])/double(nsites);
-		sxsztot[nq]=sxtot[nq]*conj(sztot[nq])/double(nsites);
 
-		sysxtot[nq]=sytot[nq]*conj(sxtot[nq])/double(nsites);
-		sysytot[nq]=sytot[nq]*conj(sytot[nq])/double(nsites);
-		sysztot[nq]=sytot[nq]*conj(sztot[nq])/double(nsites);
+      for (int om=0;om<numomegas;om++)
+      {	
+	      #pragma omp parallel for
+	      for (int nq=0;nq<numqs;nq++) 
+	      {
+			smunu.sxx[om][nq]=sxtot[om][nq]*conj(sxtot[om][nq])/double(nsites);
+			smunu.sxy[om][nq]=sxtot[om][nq]*conj(sytot[om][nq])/double(nsites);
+			smunu.sxz[om][nq]=sxtot[om][nq]*conj(sztot[om][nq])/double(nsites);
 
-		szsxtot[nq]=sztot[nq]*conj(sxtot[nq])/double(nsites);
-		szsytot[nq]=sztot[nq]*conj(sytot[nq])/double(nsites);
-		szsztot[nq]=sztot[nq]*conj(sztot[nq])/double(nsites);
+			smunu.syx[om][nq]=sytot[om][nq]*conj(sxtot[om][nq])/double(nsites);
+			smunu.syy[om][nq]=sytot[om][nq]*conj(sytot[om][nq])/double(nsites);
+			smunu.syz[om][nq]=sytot[om][nq]*conj(sztot[om][nq])/double(nsites);
+
+			smunu.szx[om][nq]=sztot[om][nq]*conj(sxtot[om][nq])/double(nsites);
+			smunu.szy[om][nq]=sztot[om][nq]*conj(sytot[om][nq])/double(nsites);
+			smunu.szz[om][nq]=sztot[om][nq]*conj(sztot[om][nq])/double(nsites);
+	      }
       }
 
       /*cout<<"======================================================================================================================================="<<endl;
       cout<<" h      k      l     SXX(Q)    SXY(Q)    SXZ(Q)    SYX(Q)     SYY(Q)     SYZ(Q)     SZX(Q)     SZY(Q)     SZZ(Q)          Sperp(Q)     "<<endl;
       cout<<"======================================================================================================================================="<<endl;*/
-      smunu.init(numqs);
-      smunu.qvals=qvals;
-      for (int i=0;i<numqs;i++)
+      for (int om=0; om<numomegas; om++)
       {
-	double qx=qvals[i][0]; double qy=qvals[i][1]; double qz=qvals[i][2];
-	complex<double> sxx=sxsxtot[i]; complex<double> syy=sysytot[i]; complex<double> szz=szsztot[i];
-	
-	complex<double> sxy=sxsytot[i]; complex<double> syx=sysxtot[i];
-	complex<double> sxz=sxsztot[i]; complex<double> szx=szsxtot[i];
-	complex<double> syz=sysztot[i]; complex<double> szy=szsytot[i];
+      	      #pragma omp parallel for
+	      for (int i=0;i<numqs;i++)
+	      {
+		double qx=qvals[i][0]; double qy=qvals[i][1]; double qz=qvals[i][2];
+		complex<double> sxx=smunu.sxx[om][i]; complex<double> syy=smunu.syy[om][i]; complex<double> szz=smunu.szz[om][i];
+		complex<double> sxy=smunu.sxy[om][i]; complex<double> syx=smunu.syx[om][i];
+		complex<double> sxz=smunu.sxz[om][i]; complex<double> szx=smunu.szx[om][i];
+		complex<double> syz=smunu.syz[om][i]; complex<double> szy=smunu.szy[om][i];
 
-	double q2=((qx*qx)+(qy*qy)+(qz*qz));
-	complex<double> sperp=0.0;
-	if (abs(q2)>1.0e-6)
-	{
-		sperp=(1.0 - (qx*qx/q2))*sxx + (1.0 - (qy*qy/q2))*syy + (1.0 - (qz*qz/q2))*szz + (-sxy*qx*qy/q2) + (-syx*qy*qx/q2) + (-sxz*qx*qz/q2) + (-szx*qx*qz/q2) + (-syz*qz*qy/q2) + (-szy*qz*qy/q2); 
-	}
-	else
-	{
-		sperp=sxx + syy + szz; 
-	}
-	//cout<<boost::format("%+ .5f  %+ .5f  %+ .5f  %+ .8f   %+ .8f   %+ .8f   %+ .8f   %+ .8f   %+ .8f  %+ .8f  %+ .8f %+ .8f  %+ .8f") %qx %qy %qz %sxx %sxy %sxz %syx %syy %syz %szx %szy %szz %sperp<<endl;
-			
-       smunu.sxx[i]=sxx; smunu.syy[i]=syy;smunu.szz[i]=szz; 
-       smunu.sxy[i]=sxy; smunu.syx[i]=syx; 
-       smunu.sxz[i]=sxz; smunu.szx[i]=szx; 
-       smunu.syz[i]=syz; smunu.szy[i]=szy;
-       smunu.sperp[i]=sperp; 
+		double q2=((qx*qx)+(qy*qy)+(qz*qz));
+		complex<double> sperp=0.0;
+		if (abs(q2)>1.0e-6)
+		{
+			sperp=(1.0 - (qx*qx/q2))*sxx + (1.0 - (qy*qy/q2))*syy + (1.0 - (qz*qz/q2))*szz + (-sxy*qx*qy/q2) + (-syx*qy*qx/q2) + (-sxz*qx*qz/q2) + (-szx*qx*qz/q2) + (-syz*qz*qy/q2) + (-szy*qz*qy/q2); 
+		}
+		else
+		{
+			sperp=sxx + syy + szz; 
+		}
+		//cout<<boost::format("%+ .5f  %+ .5f  %+ .5f  %+ .8f   %+ .8f   %+ .8f   %+ .8f   %+ .8f   %+ .8f  %+ .8f  %+ .8f %+ .8f  %+ .8f") %qx %qy %qz %sxx %sxy %sxz %syx %syy %syz %szx %szy %szz %sperp<<endl;
+	       smunu.sperp[om][i]=sperp; 
+	     }
      }
 }
