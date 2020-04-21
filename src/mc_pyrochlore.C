@@ -313,9 +313,9 @@ void make_qs(int L, std::vector<std::vector<double> > &qvals)
 {	
 	qvals.clear();
 	std::vector<double> qs; 
-	for (int i=0;i<=4*L;i++)
+	for (int i=0;i<=8*L;i++)
 	{
-		double q=double(i)/double(L);
+		double q=double(i)/double(2*L);
 		qs.push_back(q);
 	} 
 	int onedq=qs.size();	
