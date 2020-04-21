@@ -1451,12 +1451,13 @@ void mc_pyrochlore_get_thermal_config_and_time_evolve(double spin, double deltat
 		cout<<"======================================================================================================================================="<<endl;
 		for (int i=0;i<numqs;i++)
 		{
+			double pi=3.14159265358979; // Normalization of T/pi - see HJC notes on Dropbox
 			double qx=savg.qvals[i][0];double qy=savg.qvals[i][1];double qz=savg.qvals[i][2];
-			complex<double> sxx=savg.sxx[om][i];complex<double> syy=savg.syy[om][i];complex<double> szz=savg.szz[om][i];
-			complex<double> sxy=savg.sxy[om][i];complex<double> syx=savg.syx[om][i];
-			complex<double> sxz=savg.sxz[om][i];complex<double> szx=savg.szx[om][i];
-			complex<double> syz=savg.syz[om][i];complex<double> szy=savg.szy[om][i];
-			complex<double> sperp=savg.sperp[om][i];
+			complex<double> sxx=savg.sxx[om][i]*(tottime/pi);complex<double> syy=savg.syy[om][i]*(tottime/pi);complex<double> szz=savg.szz[om][i]*(tottime/pi);
+			complex<double> sxy=savg.sxy[om][i]*(tottime/pi);complex<double> syx=savg.syx[om][i]*(tottime/pi);
+			complex<double> sxz=savg.sxz[om][i]*(tottime/pi);complex<double> szx=savg.szx[om][i]*(tottime/pi);
+			complex<double> syz=savg.syz[om][i]*(tottime/pi);complex<double> szy=savg.szy[om][i]*(tottime/pi);
+			complex<double> sperp=savg.sperp[om][i]*(tottime/pi);
 			
 			cout<<boost::format("%+ .5f  %+ .5f  %+ .5f  %+ .8f   %+ .8f   %+ .8f   %+ .8f   %+ .8f   %+ .8f  %+ .8f  %+ .8f %+ .8f  %+ .8f") %qx %qy %qz %sxx %sxy %sxz %syx %syy %syz %szx %szy %szz %sperp<<endl;
 		 }				
