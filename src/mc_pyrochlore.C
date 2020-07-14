@@ -1347,7 +1347,7 @@ void mc_pyrochlore_get_thermal_config_and_time_evolve(double spin, double deltat
 			///////////////////////////////////////////////////////////////////////
 			// Usual Moves of a serial Metropolis Monte Carlo
 			///////////////////////////////////////////////////////////////////////
-			int b=0;
+			int b=0;   // WE ARE NOT DOING REPLICA
 			// Very Small moves needed at low temperatures to increase acceptance rates
 			double move_size=0.3;  
 			// Choose random site
@@ -1386,7 +1386,7 @@ void mc_pyrochlore_get_thermal_config_and_time_evolve(double spin, double deltat
 					// Jterms                        // hterms - no field for now
 			double ediff=(local_energyj2-local_energyj1); //+ (local_energyh2-local_energyh1);
 			double beta=infos[b].beta; 
-			if (n<nburn/2) beta=infos[b].beta*(2.0*double(n)/double(nburn));
+			if (n<nburn/2) beta=infos[b].beta*(2.0*double(n)/double(nburn));   // SLOW COOLING
 			double prob=exp(-beta*ediff);
 			double rand=uniform_rnd();
 			if (rand<prob) // Metropolis Accept-reject for a given temperature
