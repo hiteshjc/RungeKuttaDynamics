@@ -21,7 +21,10 @@ void make_phases( std::vector< std::vector<double> > &fullcoords,
 		  std::vector< std::vector<double> > &qvals,
 		  Matrix &phases);
 
-void fourier_transforms(double spin,Matrix &phases, 
+void fourier_transforms(double spin,
+			std::vector< std::vector<int> > &ijkt,
+			std::vector<RMatrix> &gmats,
+			Matrix &phases, 
 			std::vector<double> &configx,
 			std::vector<double> &configy,
 			std::vector<double> &configz,
@@ -29,12 +32,20 @@ void fourier_transforms(double spin,Matrix &phases,
 			std::vector<complex<double> > &syq,
 			std::vector<complex<double> > &szq);
 
-void mc_pyrochlore_get_thermal_config_and_spin_wave(double spin,
-		  int L, int nstarts, int64_t nsamples, int64_t nburn, string start_config, 
-		   string mcmove, double temp, int ntemps, double hx, double hy, double hz, 
-		   double J1, double J2, double J3, double J4, double Jnnn,
-		   double disorder_strength,
-		   double gxy, double gz); 
+//void fourier_transforms(double spin,Matrix &phases, 
+//			std::vector<double> &configx,
+//			std::vector<double> &configy,
+//			std::vector<double> &configz,
+//			std::vector<complex<double> > &sxq,
+//			std::vector<complex<double> > &syq,
+//			std::vector<complex<double> > &szq);
+
+//void mc_pyrochlore_get_thermal_config_and_spin_wave(double spin,
+//		  int L, int nstarts, int64_t nsamples, int64_t nburn, string start_config, 
+//		   string mcmove, double temp, int ntemps, double hx, double hy, double hz, 
+//		   double J1, double J2, double J3, double J4, double Jnnn,
+//		   double disorder_strength,
+//		   double gxy, double gz); 
 
 void mc_pyrochlore_get_thermal_config_and_time_evolve(double spin, double deltat, 
 		   double omegamin, double omegamax, double omegaspacing, 
@@ -45,70 +56,70 @@ void mc_pyrochlore_get_thermal_config_and_time_evolve(double spin, double deltat
 		   double disorder_strength,
 		   double gxy, double gz); 
 
-void mc_pyrochlore_ptall(double spin, int L,int64_t nsamples, int64_t nburn, string start_config, 
-		   string mcmove, double tminKelvin, double tmaxKelvin, int ntemps, double hx, double hy, double hz, 
-		   double J1, double J2, double J3, double J4, double Jnnn,
-		   double disorder_strength,
-		   double gxy, double gz, 
-		   double & eavg, 
-		   double &mxavg, double &myavg, double &mzavg, double &e2avg, 
-		   double &mx2avg, double &my2avg, double &mz2avg, bool &measure_corrs);
-
-void mc_pyrochlore_pt(double spin, int L,int64_t nsamples, int64_t nburn, string start_config, 
-		   string mcmove, double temp, int ntemps, double hx, double hy, double hz, 
-		   double J1, double J2, double J3, double J4, double Jnnn,
-		   double disorder_strength,
-		   double gxy, double gz, 
-		   double & eavg, 
-		   double &mxavg, double &myavg, double &mzavg, double &e2avg, 
-		   double &mx2avg, double &my2avg, double &mz2avg, bool &measure_corrs);
-
-void iterative_pyrochlore(double spin, int L,int nsamples, int nburn, string start_config, 
-		   	  double hx, double hy, double hz, 
-		   	  double J1, double J2, double J3, double J4, double Jnnn,
-		   	  double disorder_strength,
-		   	  double gxy, double gz, 
-		   	  double & eavg, 
-		   	  double &mxavg, double &myavg, double &mzavg, double &e2avg, 
-		   	  double &mx2avg, double &my2avg, double &mz2avg, bool &measure_corrs);
-
-void mc_pyrochlore(double spin, int L,int nsamples, int nburn, string start_config, 
-		   string mcmove, double temp, double hx, double hy, double hz, 
-		   double J1, double J2, double J3, double J4, double Jnnn, double disorder,
-		   double gxy, double gz, 
-		   double & eavg, 
-		   double &mxavg, double &myavg, double &mzavg, double &e2avg, 
-		   double &mx2avg, double &my2avg, double &mz2avg, bool &measure_corrs);
-
-void mc_pyrochlore_groundstate(double spin, int L,int64_t nsamples, int64_t nburn, int nwait, 
-			       string start_config, 
-		   	       string mcmove, double temp, int ntemps, double hx, double hy, double hz, 
-		   	       double J1, double J2, double J3, double J4, double Jnnn,
-		   	       double disorder_strength,
-			       double gxy, double gz, 
-			       double & eavg, 
-			       double &mxavg, double &myavg, double &mzavg, double &e2avg, 
-			       double &mx2avg, double &my2avg, double &mz2avg, bool &measure_corrs);
-
-
-
-void mc_pyrochlore_slowcool(double spin, int L,int64_t nsamples, int64_t nburn, string start_config, 
-		   string mcmove, double temp, int ntemps, double hx, double hy, double hz, 
-		   double J1, double J2, double J3, double J4, double Jnnn,
-		   double disorder_strength,
-		   double gxy, double gz, 
-		   double & eavg, 
-		   double &mxavg, double &myavg, double &mzavg, double &e2avg, 
-		   double &mx2avg, double &my2avg, double &mz2avg, bool &measure_corrs);
-
-
-void mc_pyrochlore_pt(double spin, int L,int nsamples, int nburn, string start_config, 
-		   string mcmove, double temp, int ntemps, double hx, double hy, double hz, 
-		   double J1, double J2, double J3, double J4, double Jnnn,
-		   double disorder_strength,
-		   double gxy, double gz, 
-		   double & eavg, 
-		   double &mxavg, double &myavg, double &mzavg, double &e2avg, 
-		   double &mx2avg, double &my2avg, double &mz2avg, bool &measure_corrs);
+//void mc_pyrochlore_ptall(double spin, int L,int64_t nsamples, int64_t nburn, string start_config, 
+//		   string mcmove, double tminKelvin, double tmaxKelvin, int ntemps, double hx, double hy, double hz, 
+//		   double J1, double J2, double J3, double J4, double Jnnn,
+//		   double disorder_strength,
+//		   double gxy, double gz, 
+//		   double & eavg, 
+//		   double &mxavg, double &myavg, double &mzavg, double &e2avg, 
+//		   double &mx2avg, double &my2avg, double &mz2avg, bool &measure_corrs);
+//
+//void mc_pyrochlore_pt(double spin, int L,int64_t nsamples, int64_t nburn, string start_config, 
+//		   string mcmove, double temp, int ntemps, double hx, double hy, double hz, 
+//		   double J1, double J2, double J3, double J4, double Jnnn,
+//		   double disorder_strength,
+//		   double gxy, double gz, 
+//		   double & eavg, 
+//		   double &mxavg, double &myavg, double &mzavg, double &e2avg, 
+//		   double &mx2avg, double &my2avg, double &mz2avg, bool &measure_corrs);
+//
+//void iterative_pyrochlore(double spin, int L,int nsamples, int nburn, string start_config, 
+//		   	  double hx, double hy, double hz, 
+//		   	  double J1, double J2, double J3, double J4, double Jnnn,
+//		   	  double disorder_strength,
+//		   	  double gxy, double gz, 
+//		   	  double & eavg, 
+//		   	  double &mxavg, double &myavg, double &mzavg, double &e2avg, 
+//		   	  double &mx2avg, double &my2avg, double &mz2avg, bool &measure_corrs);
+//
+//void mc_pyrochlore(double spin, int L,int nsamples, int nburn, string start_config, 
+//		   string mcmove, double temp, double hx, double hy, double hz, 
+//		   double J1, double J2, double J3, double J4, double Jnnn, double disorder,
+//		   double gxy, double gz, 
+//		   double & eavg, 
+//		   double &mxavg, double &myavg, double &mzavg, double &e2avg, 
+//		   double &mx2avg, double &my2avg, double &mz2avg, bool &measure_corrs);
+//
+//void mc_pyrochlore_groundstate(double spin, int L,int64_t nsamples, int64_t nburn, int nwait, 
+//			       string start_config, 
+//		   	       string mcmove, double temp, int ntemps, double hx, double hy, double hz, 
+//		   	       double J1, double J2, double J3, double J4, double Jnnn,
+//		   	       double disorder_strength,
+//			       double gxy, double gz, 
+//			       double & eavg, 
+//			       double &mxavg, double &myavg, double &mzavg, double &e2avg, 
+//			       double &mx2avg, double &my2avg, double &mz2avg, bool &measure_corrs);
+//
+//
+//
+//void mc_pyrochlore_slowcool(double spin, int L,int64_t nsamples, int64_t nburn, string start_config, 
+//		   string mcmove, double temp, int ntemps, double hx, double hy, double hz, 
+//		   double J1, double J2, double J3, double J4, double Jnnn,
+//		   double disorder_strength,
+//		   double gxy, double gz, 
+//		   double & eavg, 
+//		   double &mxavg, double &myavg, double &mzavg, double &e2avg, 
+//		   double &mx2avg, double &my2avg, double &mz2avg, bool &measure_corrs);
+//
+//
+//void mc_pyrochlore_pt(double spin, int L,int nsamples, int nburn, string start_config, 
+//		   string mcmove, double temp, int ntemps, double hx, double hy, double hz, 
+//		   double J1, double J2, double J3, double J4, double Jnnn,
+//		   double disorder_strength,
+//		   double gxy, double gz, 
+//		   double & eavg, 
+//		   double &mxavg, double &myavg, double &mzavg, double &e2avg, 
+//		   double &mx2avg, double &my2avg, double &mz2avg, bool &measure_corrs);
 
 #endif
