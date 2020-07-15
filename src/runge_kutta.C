@@ -110,6 +110,7 @@ void time_evolve(   double spin, double deltat,
 		    RMatrix &Jmat13, RMatrix &Jmat31,
 		    RMatrix &Jmat23, RMatrix &Jmat32,
 		    double &Jnnn, RMatrix &bond_disorder_matrix,
+		    std::vector<RMatrix>   &gmats, 
 		    std::vector< std::vector<double> > &fullcoords,
 		    std::vector< std::vector<int> >   & ijkt, 
 		    std::vector<std::vector<double> > & qvals,
@@ -191,7 +192,7 @@ void time_evolve(   double spin, double deltat,
 		cout<<"Time = "<<boost::format("%+ .5f") %time<<" S(0)S(t) = "<<boost::format("%+ .10f") %((config0x[0]*configx[0])+(config0y[0]*configy[0])+(config0z[0]*configz[0]))<<"  E = "<<boost::format("%+ .10f") %energyj<<endl;
 		//cout<<endl;
 
-		fourier_transforms(spin,phases,config0x,config0y,config0z,sxtq,sytq,sztq);
+		fourier_transforms(spin,ijkt,gmats,phases,config0x,config0y,config0z,sxtq,sytq,sztq);
 		
 		for (int om=0; om<numomegas; om++)
 		{

@@ -223,7 +223,11 @@ void make_bond_disorder_matrix(double disorder_strength,
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-void fourier_transforms(double spin,Matrix &phases, 
+// NEEDS CHECKING
+void fourier_transforms(double spin,
+			std::vector< std::vector<int> > &ijkt,
+			std::vector<RMatrix> &gmats,
+			Matrix &phases, 
 			std::vector<double> &configx,
 			std::vector<double> &configy,
 			std::vector<double> &configz,
@@ -241,9 +245,16 @@ void fourier_transforms(double spin,Matrix &phases,
 		szq[i]=0.0;
 		for (int j=0;j<numsites;j++)
 		{
-			sxq[i]+=(configx[j]*phases(i,j)*spin);
-			syq[i]+=(configy[j]*phases(i,j)*spin);
-			szq[i]+=(configz[j]*phases(i,j)*spin);
+			int t=ijkt[j][3];
+			double mx=gmats[t](0,0)*configx[j]+gmats[t](0,1)*configy[j]+gmats[t](0,2)*configz[j];
+			double my=gmats[t](1,0)*configx[j]+gmats[t](1,1)*configy[j]+gmats[t](1,2)*configz[j];
+			double mz=gmats[t](2,0)*configx[j]+gmats[t](2,1)*configy[j]+gmats[t](2,2)*configz[j];
+			sxq[i]+=(mx*phases(i,j)*spin);
+			syq[i]+=(my*phases(i,j)*spin);
+			szq[i]+=(mz*phases(i,j)*spin);
+			//sxq[i]+=(configx[j]*phases(i,j)*spin);
+			//syq[i]+=(configy[j]*phases(i,j)*spin);
+			//szq[i]+=(configz[j]*phases(i,j)*spin);
 		}
 	}
 
@@ -1430,7 +1441,7 @@ void mc_pyrochlore_get_thermal_config_and_time_evolve(double spin, double deltat
 		cout<<endl;
 		time_evolve(spin, deltat, tottime, L, infos[0].configx,infos[0].configy,infos[0].configz,neighbors, 
 			    nneighbors, Jmat01, Jmat10, Jmat02, Jmat20, Jmat03, Jmat30, Jmat12, Jmat21, 
-			    Jmat13, Jmat31,Jmat23, Jmat32, Jnnn, bond_disorder_matrix,fullcoords,ijkt, qvals, phases, omegas, smunu);
+			    Jmat13, Jmat31,Jmat23, Jmat32, Jnnn, bond_disorder_matrix, gmats, fullcoords, ijkt, qvals, phases, omegas, smunu);
 	     
                 if (nstart>0) savg.update_totals(smunu);
 		else	 { savg.init(int(smunu.qvals.size()),numomegas); savg.copy(smunu);}
@@ -1695,1418 +1706,1418 @@ void mc_pyrochlore_get_thermal_config_and_time_evolve(double spin, double deltat
 //	}  // End nstarts
 //}
 
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-void mc_pyrochlore_slowcool(double spin, int L,int64_t nsamples, int64_t nburn, string start_config, 
-		   string mcmove, double temp, int ntemps, double hx, double hy, double hz, 
-		   double J1, double J2, double J3, double J4, double Jnnn,
-		   double disorder_strength,
-		   double gxy, double gz, 
-		   double & eavg, 
-		   double &mxavg, double &myavg, double &mzavg, double &e2avg, 
-		   double &mx2avg, double &my2avg, double &mz2avg, bool &measure_corrs)
-{
-	/////////////////////////////////////////////////////////////////////////
-	// MC related quantities
-	// Units - Assume J in meV (millielectron volts)
-        //         Assume h in T   (tesla)
-        //         Convert h to meV units in total_h_energy and local_h_energy
-        // Convert temperature in Kelvin to temperature in meV
-	// Set 16xLxLxL pyrochlore lattice
-	int nsites=16*L*L*L;
-       	double kB=1.38064852*1e-23;
-        double NA=6.02214179*1e23;
-        double JpermeV=1.60218*1e-22; 
-	double tempKelvin=temp;
-        temp=tempKelvin*0.08621738;
-
-	/////////////////////////////////////////////////////////////////////////
-	// J and g matrices
-	
-	RMatrix Jmat01,Jmat02,Jmat03,Jmat12,Jmat13,Jmat23;
-	RMatrix Jmat10,Jmat20,Jmat30,Jmat21,Jmat31,Jmat32;
-	RMatrix gmat0,gmat1,gmat2,gmat3; 
-        RMatrix bond_disorder_matrix(nsites,nsites);
-	// Given J1, J2, J3, J4 - make J mats 
-	make_J_mats(J1,J2,J3,J4,Jmat01,Jmat10, Jmat02, Jmat20, Jmat03, Jmat30, Jmat12, Jmat21, Jmat13, Jmat31, Jmat23, Jmat32);
-	// Given g's - make g mats 
-	make_g_mats(gxy,gz,gmat0,gmat1,gmat2,gmat3);
-	std::vector<RMatrix> gmats;
-	gmats.push_back(gmat0);gmats.push_back(gmat1);gmats.push_back(gmat2);gmats.push_back(gmat3);
-
-	/////////////////////////////////////////////////////////////////////////
-	// MC related quantities
-	// Set nburn
-	nburn=nsamples;
-	cout<<"Nsamples = "<<nsamples<<endl;
-	cout<<"Nburn    = "<<nburn<<endl;
-	double e4avg,mx4avg,my4avg,mz4avg;
-	
-	/////////////////////////////////////////////////////////////////////////
-	// Set 16xLxLxL pyrochlore lattice
-	std::vector< std::vector<int> > neighbors(nsites);	
-	std::vector< std::vector<int> > nneighbors(nsites);	
-	std::vector< std::vector<double> > fullcoords;	
-	std::vector< std::vector<int> > ijkt;	
-        make_pyrochlore(L,fullcoords,ijkt,neighbors,nneighbors,measure_corrs);
-	// Make disorder matrix to be added to the Heisenberg couplings 
-	make_bond_disorder_matrix(disorder_strength,neighbors,bond_disorder_matrix);
-	
-	/////////////////////////////////////////////////////////////////////////
-	// Make random configuration of spins or selected type 
-	ntemps=1;
-	std::vector<QMC_Info> infos;
-	cout<<"Ntemps   = "<<ntemps<<endl;
-	double exponent=pow(100.0,1.0/double(ntemps)); // Tmax/Tmin=30
-	cout<<"exponent = "<<exponent<<endl;
-	for (int b=0;b<ntemps;b++)
-	{
-		QMC_Info qmc;
-		qmc.init(L,nsites,tempKelvin*pow(exponent,double(b)),measure_corrs);
-		infos.push_back(qmc);
-		cout<<"Beta = "<<infos[b].beta<<endl;
-		if (start_config=="random") make_random_config(nsites,infos[b].configx,infos[b].configy,infos[b].configz); 
-		if (start_config=="111")    make_111_config(nsites,infos[b].configx,infos[b].configy,infos[b].configz); 
-		if (start_config=="x")      make_x_config(nsites,infos[b].configx,infos[b].configy,infos[b].configz);
-	}
-	Matrix phases;
-	make_phases(fullcoords,infos[0].qvals,phases);
-
-	
-	for (int b=0;b<ntemps;b++)
-	{
-		//if (measure_corrs) correlations(spin,configx,configy,configz,sxsxcorrs,sysycorrs,szszcorrs,sxsycorrs,sxszcorrs,syszcorrs);
-		double 		    energyj=total_j_energy(spin, infos[b].configx,infos[b].configy,infos[b].configz,
-								 neighbors,nneighbors,
-							   	 Jmat01, Jmat10, 
-							   	 Jmat02, Jmat20, 
-							   	 Jmat03, Jmat30, 
-							   	 Jmat12, Jmat21, 
-							   	 Jmat13, Jmat31, 
-							   	 Jmat23, Jmat32, Jnnn, bond_disorder_matrix, ijkt);
-		double 		    energyh=total_h_energy(spin, infos[b].configx, infos[b].configy, infos[b].configz, 
-							   hx,hy,hz, gmats , ijkt);
-		std::vector<double> magnetization=total_magnetization(spin, infos[b].configx, infos[b].configy, infos[b].configz, 
-								      gmats, ijkt);
-		fourier_transforms(spin,phases,infos[b].configx,infos[b].configy,infos[b].configz,infos[b].sxq,infos[b].syq,infos[b].szq);
-		infos[b].energy=energyj+energyh;
-		infos[b].mx=magnetization[0];infos[b].my=magnetization[1];infos[b].mz=magnetization[2];
-		cout<<"Total J energy                  ="<<energyj<<endl;
-		cout<<"Total h energy                  ="<<energyh<<endl;
-		cout<<"Total J energy + total h energy ="<<infos[b].energy<<endl;
-		cout<<"Total magnetization is          ="<<endl; print_vec_acc(magnetization,true);
-		cout<<"Total magnetization (from FT is)="<<endl; cout<<infos[b].sxq[0]<<"  "<<infos[b].syq[0]<<"  "<<infos[b].szq[0]<<endl;
-	}
-
-	cout<<endl;	
-	cout<<endl;	
-	cout<<"========================================================"<<endl;
-	cout<<"Energy history "<<endl;	
-	/////////////////////////////////////////////////////////////////////////
-	// Accept reject Metropolis
-	double accept=0.0;
-	double reject=0.0;
-	double nswaps=0.0;
-	double nreplicatries=0.0;
-	double elowest=0.0;
-	for (int64_t n=0; n<(nsamples+nburn);n++)
-	{
-		///////////////////////////////////////////////////////////////////////
-		// Usual Moves of a serial Metropolis Monte Carlo
-		///////////////////////////////////////////////////////////////////////
-		int b=0;
-		// Very Small moves needed at low temperatures to increase acceptance rates
-		double move_size=0.3;  
-		// Choose random site
-		int site=uniform_rand_int(0,nsites);
-		int t=ijkt[site][3];
-		double sxnew,synew,sznew;
-		// Current sx,sy,sz on chosen site
-		double sx=infos[b].configx[site];double sy=infos[b].configy[site];double sz=infos[b].configz[site];						// Choose a completely random direction - This is INEFFICENT at low temps
-		if (mcmove=="random")  random_move_continuous_spin(sxnew,synew,sznew);
-		// Choose a completely random direction within a cone
-		if (mcmove=="conical") conical_move_continuous_spin(move_size,sx,sy,sz,sxnew,synew,sznew);
-		if (mcmove=="infDspecial")    infD_move_special_continuous_spin(sx,sy,sz,sxnew,synew,sznew);
-		if (mcmove=="largeD")
-		{
-			double tempnum=uniform_rnd();
-			if (tempnum>0.5) conical_move_continuous_spin(move_size,sx,sy,sz,sxnew,synew,sznew);
-			else	         big_move_continuous_spin(sx,sy,sz,sxnew,synew,sznew);
-		}	
-		// Normalize new direction
-		double norm=sqrt(sxnew*sxnew + synew*synew + sznew*sznew); 
-		sxnew=sxnew/norm; synew=synew/norm; sznew=sznew/norm;
-
-		// Calculate local energy of old and new configs
-		double eff_field_x, eff_field_y, eff_field_z;
-		local_j_energy(spin, site,t,sx,sy,sz,
-			       infos[b].configx,infos[b].configy,infos[b].configz, 
-			       neighbors, nneighbors,
-			       Jmat01,Jmat10, Jmat02,Jmat20, Jmat03, Jmat30, Jmat12, Jmat21, 
-			       Jmat13,Jmat31, Jmat23, Jmat32, Jnnn, bond_disorder_matrix, ijkt,
-			       eff_field_x, eff_field_y,eff_field_z);
-		double local_energyj1=( (sx*eff_field_x) + (sy*eff_field_y)+ (sz*eff_field_z))*spin*spin; 
-		double local_energyj2=( (sxnew*eff_field_x) + (synew*eff_field_y)+ (sznew*eff_field_z))*spin*spin; 
-		double mxdiff=(sxnew-sx)*spin;	
-		double mydiff=(synew-sy)*spin;
-		double mzdiff=(sznew-sz)*spin;
-				// Jterms                        // hterms - no field for now
-		double ediff=(local_energyj2-local_energyj1); //+ (local_energyh2-local_energyh1);
-		double beta=infos[b].beta; 
-		if (n<nburn/2) beta=infos[b].beta*(2.0*double(n)/double(nburn));
-		double prob=exp(-beta*ediff);
-		double rand=uniform_rnd();
-		if (rand<prob) // Metropolis Accept-reject for a given temperature
-		{
-			if (b==0 and n>(nburn)) accept=accept+1.0;
-			// Reset configs to new configs, because accepted
-			infos[b].configx[site]=sxnew;infos[b].configy[site]=synew;infos[b].configz[site]=sznew;
-			infos[b].energy+=ediff;
-			if (infos[b].energy<elowest) elowest=infos[b].energy;
-			infos[b].mx+=mxdiff;infos[b].my+=mydiff;infos[b].mz+=mzdiff;
-			if (n>nburn and measure_corrs==true) // Updating needed only when measuring
-			{
-				#pragma omp parallel for
-				for (int i=0;i<infos[b].numqs;i++)
-				{
-					infos[b].sxq[i]+=(mxdiff*phases(i,site));
-					infos[b].syq[i]+=(mydiff*phases(i,site));
-					infos[b].szq[i]+=(mzdiff*phases(i,site));
-				}
-			}
-		}
-		else
-		{
-			if (b==0 and n>(nburn)) reject=reject+1.0;
-			// Still move spin if rejected, but this conserves energy!!
-			double norm=(eff_field_x*eff_field_x)+(eff_field_y*eff_field_y)+(eff_field_z*eff_field_z);
-			norm=sqrt(norm);
-			eff_field_x=eff_field_x/norm;
-			eff_field_y=eff_field_y/norm;
-			eff_field_z=eff_field_z/norm;
-			double costheta=(sx*eff_field_x)+(sy*eff_field_y)+(sz*eff_field_z);
-			double sintheta=sqrt(1.0-(costheta*costheta));	
-			double phi=uniform_rnd()*2.0*3.14159; // random in range 0 to 2 pi
-			double x1,y1,z1, x2,y2,z2;	
-			get_two_normalized_orth_dirs(eff_field_x, eff_field_y, eff_field_z, 
-						     x1, y1, z1, 
-						     x2, y2, z2);
-			double sxnew=(costheta*eff_field_x)  + (sintheta*cos(phi)*x1)+ (sintheta*sin(phi)*x2);
-			double synew=(costheta*eff_field_y)  + (sintheta*cos(phi)*y1)+ (sintheta*sin(phi)*y2);
-			double sznew=(costheta*eff_field_z)  + (sintheta*cos(phi)*z1)+ (sintheta*sin(phi)*z2);
-			double mxdiff=(sxnew-sx)*spin;	
-			double mydiff=(synew-sy)*spin;
-			double mzdiff=(sznew-sz)*spin;
-			infos[b].configx[site]=sxnew;infos[b].configy[site]=synew;infos[b].configz[site]=sznew;
-			infos[b].mx+=mxdiff;infos[b].my+=mydiff;infos[b].mz+=mzdiff;
-			if (n>nburn and measure_corrs==true) // Updating needed only when measuring
-			{
-				#pragma omp parallel for
-				for (int i=0;i<infos[b].numqs;i++)
-				{
-					infos[b].sxq[i]+=(mxdiff*phases(i,site));
-					infos[b].syq[i]+=(mydiff*phases(i,site));
-					infos[b].szq[i]+=(mzdiff*phases(i,site));
-				}
-			}
-			// ediff=0 by construction!!
-		}
-		// Structure factors not needed before measurement stage
-		if (n==nburn and measure_corrs==true) fourier_transforms(spin,phases,infos[b].configx,infos[b].configy,infos[b].configz,infos[b].sxq,infos[b].syq,infos[b].szq);
-		if (n>nburn and n%nsites==0) infos[0].update_totals(); // Update averages - after 1 sweep and after equilibration done 
-		if (n%nsites==0 or n==nburn+nsamples-1) cout<<boost::format("%+ .5f") %infos[0].energy<<endl;
-	}
-	cout<<"========================================================"<<endl;
-	cout<<endl;
-	accept=accept/(accept+reject);
-	// Only the lowest temperature is relevant for averages we are interested in 
-	infos[0].average();
-	cout<<"elowest    	= "<<boost::format("%+ .15f") %elowest<<endl;
-	cout<<"Nmeas    	= "<<boost::format("%+ .15f") %infos[0].nmeas<<endl;
-	cout<<"accept    	= "<<boost::format("%+ .15f") %accept<<endl;
-	cout<<"nswaps (0)    	= "<<boost::format("%+ .15f") %nswaps<<endl;
-	cout<<"mxavg     	= "<<boost::format("%+ .15f") %infos[0].mxavg<<endl;
-	cout<<"myavg     	= "<<boost::format("%+ .15f") %infos[0].myavg<<endl;
-	cout<<"mzavg     	= "<<boost::format("%+ .15f") %infos[0].mzavg<<endl;
-	cout<<"mx2avg    	= "<<boost::format("%+ .15f") %infos[0].mx2avg<<endl;
-	cout<<"my2avg    	= "<<boost::format("%+ .15f") %infos[0].my2avg<<endl;
-	cout<<"mz2avg    	= "<<boost::format("%+ .15f") %infos[0].mz2avg<<endl;
-	cout<<"mx4avg    	= "<<boost::format("%+ .15f") %infos[0].mx4avg<<endl;
-	cout<<"my4avg    	= "<<boost::format("%+ .15f") %infos[0].my4avg<<endl;
-	cout<<"mz4avg    	= "<<boost::format("%+ .15f") %infos[0].mz4avg<<endl;
-	cout<<"eavg      	= "<<boost::format("%+ .15f") %infos[0].eavg<<endl;
-	cout<<"e2avg     	= "<<boost::format("%+ .15f") %infos[0].e2avg<<endl;
-	cout<<"e4avg     	= "<<boost::format("%+ .15f") %infos[0].e4avg<<endl;
-	cout<<"Cv        	= "<<boost::format("%+ .15f") %infos[0].spheat<<endl;
-	cout<<"Cv/Ni(J/molK)	= "<<boost::format("%+ .15f") %infos[0].spheatpersite<<endl;
-	cout<<"Cvps(no dim)	= "<<boost::format("%+ .15f") %infos[0].spheatpersitenodim<<endl;
-
-	if (measure_corrs==true)
-	{	
-		cout<<"========================================================================================================================="<<endl;
-		cout<<" h      k      l     SXX(Q)    SXY(Q)    SXZ(Q)    SYX(Q)     SYY(Q)     SYZ(Q)     SZX(Q)     SZY(Q)     SZZ(Q)         "<<endl;
-		cout<<"========================================================================================================================="<<endl;
-		for (int i=0;i<infos[0].numqs;i++)
-		{
-		cout<<boost::format("%+ .5f  %+ .5f  %+ .5f  %+ .5f   %+ .5f   %+ .5f   %+ .5f   %+ .5f   %+ .5f  %+ .5f  %+ .5f %+ .5f") %infos[0].qvals[i][0] %infos[0].qvals[i][1] %infos[0].qvals[i][2] %infos[0].sxsxtot[i] %infos[0].sxsytot[i] %infos[0].sxsztot[i] %infos[0].sysxtot[i] %infos[0].sysytot[i] %infos[0].sysztot[i] %infos[0].szsxtot[i] %infos[0].szsytot[i] %infos[0].szsztot[i]<<endl;
-			
-		}
-	}
-}
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-void mc_pyrochlore_ptall(double spin, int L,int64_t nsamples, int64_t nburn, string start_config, 
-		   string mcmove, double tminKelvin, double tmaxKelvin, int ntemps, double hx, double hy, double hz, 
-		   double J1, double J2, double J3, double J4, double Jnnn,
-		   double disorder_strength,
-		   double gxy, double gz, 
-		   double & eavg, 
-		   double &mxavg, double &myavg, double &mzavg, double &e2avg, 
-		   double &mx2avg, double &my2avg, double &mz2avg, bool &measure_corrs)
-{
-	/////////////////////////////////////////////////////////////////////////
-	// MC related quantities
-	// Units - Assume J in meV (millielectron volts)
-        //         Assume h in T   (tesla)
-        //         Convert h to meV units in total_h_energy and local_h_energy
-        // Convert temperature in Kelvin to temperature in meV
-	// Set 16xLxLxL pyrochlore lattice
-	int nsites=16*L*L*L;
-       	double kB=1.38064852*1e-23;
-        double NA=6.02214179*1e23;
-        double JpermeV=1.60218*1e-22; 
-	/////////////////////////////////////////////////////////////////////////
-	// J and g matrices
-	
-	RMatrix Jmat01,Jmat02,Jmat03,Jmat12,Jmat13,Jmat23;
-	RMatrix Jmat10,Jmat20,Jmat30,Jmat21,Jmat31,Jmat32;
-	RMatrix gmat0,gmat1,gmat2,gmat3; 
-        RMatrix bond_disorder_matrix(nsites,nsites);
-	// Given J1, J2, J3, J4 - make J mats 
-	make_J_mats(J1,J2,J3,J4,Jmat01,Jmat10, Jmat02, Jmat20, Jmat03, Jmat30, Jmat12, Jmat21, Jmat13, Jmat31, Jmat23, Jmat32);
-	// Given g's - make g mats 
-	make_g_mats(gxy,gz,gmat0,gmat1,gmat2,gmat3);
-	std::vector<RMatrix> gmats;
-	gmats.push_back(gmat0);gmats.push_back(gmat1);gmats.push_back(gmat2);gmats.push_back(gmat3);
-
-	/////////////////////////////////////////////////////////////////////////
-	// MC related quantities
-	// Set nburn
-	nburn=nsamples;
-	cout<<"Nsamples = "<<nsamples<<endl;
-	cout<<"Nburn    = "<<nburn<<endl;
-	double e4avg,mx4avg,my4avg,mz4avg;
-	
-	/////////////////////////////////////////////////////////////////////////
-	// Set 16xLxLxL pyrochlore lattice
-	std::vector< std::vector<int> > neighbors(nsites);	
-	std::vector< std::vector<int> > nneighbors(nsites);	
-	std::vector< std::vector<double> > fullcoords;	
-	std::vector< std::vector<int> > ijkt;	
-        make_pyrochlore(L,fullcoords,ijkt,neighbors,nneighbors,measure_corrs);
-	// Make disorder matrix to be added to the Heisenberg couplings 
-	// Till here the seed will give the same sequence of random numbers
-        make_bond_disorder_matrix(disorder_strength,neighbors,bond_disorder_matrix);
-	
-	/////////////////////////////////////////////////////////////////////////
-	// Make random configuration of spins or selected type 
-	std::vector<QMC_Info> infos;
-	cout<<"Ntemps   = "<<ntemps<<endl;
-	double tmax_over_tmin=tmaxKelvin/tminKelvin;
-
-	double exponent=1.0; 
-	if (ntemps>1) exponent=pow(tmax_over_tmin,1.0/double(ntemps-1));
-	
-	cout<<"exponent = "<<exponent<<endl;
-	for (int b=0;b<ntemps;b++)
-	{
-		QMC_Info qmc;
-		qmc.init(L,nsites,tminKelvin*pow(exponent,double(b)),measure_corrs);
-		infos.push_back(qmc);
-		cout<<"Beta = "<<infos[b].beta<<endl;
-		if (start_config=="random") make_random_config(nsites,infos[b].configx,infos[b].configy,infos[b].configz); 
-		if (start_config=="111")    make_111_config(nsites,infos[b].configx,infos[b].configy,infos[b].configz); 
-		if (start_config=="x")      make_x_config(nsites,infos[b].configx,infos[b].configy,infos[b].configz);
-	}
-	//Matrix phases;
-	//make_phases(fullcoords,infos[0].qvals,phases);
-
-	for (int b=0;b<ntemps;b++)
-	{
-		//if (measure_corrs) correlations(spin,configx,configy,configz,sxsxcorrs,sysycorrs,szszcorrs,sxsycorrs,sxszcorrs,syszcorrs);
-		double 		    energyj=total_j_energy(spin, infos[b].configx,infos[b].configy,infos[b].configz,
-								 neighbors,nneighbors,
-							   	 Jmat01, Jmat10, 
-							   	 Jmat02, Jmat20, 
-							   	 Jmat03, Jmat30, 
-							   	 Jmat12, Jmat21, 
-							   	 Jmat13, Jmat31, 
-							   	 Jmat23, Jmat32, Jnnn, bond_disorder_matrix, ijkt);
-		double 		    energyh=total_h_energy(spin, infos[b].configx, infos[b].configy, infos[b].configz, 
-							   hx,hy,hz, gmats , ijkt);
-		std::vector<double> magnetization=total_magnetization(spin, infos[b].configx, infos[b].configy, infos[b].configz, 
-								      gmats, ijkt);
-		infos[b].energy=energyj+energyh;
-		infos[b].mx=magnetization[0];infos[b].my=magnetization[1];infos[b].mz=magnetization[2];
-		cout<<"Total J energy                  ="<<energyj<<endl;
-		cout<<"Total h energy                  ="<<energyh<<endl;
-		cout<<"Total J energy + total h energy ="<<infos[b].energy<<endl;
-		cout<<"Total magnetization is          ="<<endl; print_vec_acc(magnetization,true);
-	}
-
-	cout<<endl;	
-	cout<<endl;	
-	cout<<"========================================================"<<endl;
-	cout<<"Energy history "<<endl;	
-	/////////////////////////////////////////////////////////////////////////
-	double nreplicatries=0.0;
-	for (int64_t n=0; n<(nsamples+(nburn));n++)
-	{
-	   if (n%nsites!=0 or ntemps==1) // Do usual Metropolis MC
-	   {
-			///////////////////////////////////////////////////////////////////////
-			// Usual Moves of a serial Metropolis Monte Carlo
-			///////////////////////////////////////////////////////////////////////
-			std::vector<double> rnd1,rnd2,rnd3,rnd4;
-			std::vector<int> rndints;
-		        // random numbers generated in advance
-			for (int b=0;b<ntemps;b++)
-			{
-				bool cond=false;
-				double r1,r2,d1,d2;
-				while (cond==false) // Problem if fixed random numbers given !!!!!!!!!
-				{
-					r1=uniform_rnd();
-					r2=uniform_rnd();
-					d1=(2.0*r1 - 1);	
-					d2=(2.0*r2 - 1);	
-					if (d1*d1 + d2*d2 <=1.0) cond=true; 
-				}
-				rnd1.push_back(r1);
-				rnd2.push_back(r2);
-				// First 2 rnds are drawn in a circle for the conical move to work
-				rnd3.push_back(uniform_rnd());
-				rnd4.push_back(uniform_rnd());
-				rndints.push_back(uniform_rand_int(0,nsites));
-			}
-			# pragma omp parallel for
-			for (int b=0;b<ntemps;b++)
-			{
-					// Very Small moves needed at low temperatures to increase acceptance rates
-					//double move_size=min(0.3,0.1*(infos[0].beta)/(infos[b].beta));  
-					double move_size=0.2;  
-					// Choose random site
-					int site=rndints[b];
-					int t=ijkt[site][3];
-					double sxnew,synew,sznew;
-					// Current sx,sy,sz on chosen site
-					double sx=infos[b].configx[site];double sy=infos[b].configy[site];double sz=infos[b].configz[site];						// Choose a completely random direction - This is INEFFICENT at low temps
-					//if (mcmove=="random")  random_move_continuous_spin(sxnew,synew,sznew);
-					// Choose a completely random direction within a cone
-					if (mcmove=="conical") conical_move_continuous_spin_rnds_provided(move_size,rnd1[b],rnd2[b],sx,sy,sz,sxnew,synew,sznew);
-					//if (mcmove=="infDspecial")    infD_move_special_continuous_spin(sx,sy,sz,sxnew,synew,sznew);
-					/*if (mcmove=="largeD")
-					{
-						double tempnum=rnd1[b];
-						if (tempnum>0.5) conical_move_continuous_spin(move_size,sx,sy,sz,sxnew,synew,sznew);
-						else	         big_move_continuous_spin(sx,sy,sz,sxnew,synew,sznew);
-					}*/	
-					// Normalize new direction
-					double norm=sqrt(sxnew*sxnew + synew*synew + sznew*sznew); 
-					sxnew=sxnew/norm; synew=synew/norm; sznew=sznew/norm;
-
-					// Calculate local energy of old and new configs
-					double eff_field_x, eff_field_y, eff_field_z;
-					local_j_energy(spin, site,t,sx,sy,sz,
-						       infos[b].configx,infos[b].configy,infos[b].configz, 
-						       neighbors, nneighbors,
-						       Jmat01,Jmat10, Jmat02,Jmat20, Jmat03, Jmat30, Jmat12, Jmat21, 
-						       Jmat13,Jmat31, Jmat23, Jmat32, Jnnn, bond_disorder_matrix, ijkt,
-						       eff_field_x, eff_field_y,eff_field_z);
-					double local_energyj1=( (sx*eff_field_x) + (sy*eff_field_y)+ (sz*eff_field_z))*spin*spin; 
-					double local_energyj2=( (sxnew*eff_field_x) + (synew*eff_field_y)+ (sznew*eff_field_z))*spin*spin; 
-					double mxdiff=(sxnew-sx)*spin;	
-					double mydiff=(synew-sy)*spin;
-					double mzdiff=(sznew-sz)*spin;
-							// Jterms                        // hterms - no field for now
-					double ediff=(local_energyj2-local_energyj1); //+ (local_energyh2-local_energyh1);
-					double beta; 
-					beta=infos[b].beta;
-					double prob=exp(-beta*ediff);
-					double rand=rnd3[b]; // random number previously generated
-					if (rand<prob) // Metropolis Accept-reject for a given temperature
-					{
-						if (n>(nburn)) infos[b].accept=infos[b].accept+1.0;
-						// Reset configs to new configs, because accepted
-						infos[b].configx[site]=sxnew;infos[b].configy[site]=synew;infos[b].configz[site]=sznew;
-						infos[b].energy+=ediff;
-						//if (infos[b].energy<elowest) elowest=infos[b].energy;
-						infos[b].mx+=mxdiff;infos[b].my+=mydiff;infos[b].mz+=mzdiff;
-						/*for (int i=0;i<infos[b].numqs;i++)
-						{
-							infos[b].sxq[i]+=(mxdiff*phases(i,site));
-							infos[b].syq[i]+=(mydiff*phases(i,site));
-							infos[b].szq[i]+=(mzdiff*phases(i,site));
-						}*/
-					}
-					else
-					{
-					       	if (n>(nburn)) infos[b].reject=infos[b].reject+1.0;
-						// Still move spin if rejected, but this conserves energy!!
-						double norm=(eff_field_x*eff_field_x)+(eff_field_y*eff_field_y)+(eff_field_z*eff_field_z);
-						norm=sqrt(norm);
-						eff_field_x=eff_field_x/norm;
-						eff_field_y=eff_field_y/norm;
-						eff_field_z=eff_field_z/norm;
-						double costheta=(sx*eff_field_x)+(sy*eff_field_y)+(sz*eff_field_z);
-						double sintheta=sqrt(1.0-(costheta*costheta));	
-						double phi=rnd4[b]*2.0*3.14159; // random in range 0 to 2 pi 
-										// random number previously generated
-						double x1,y1,z1, x2,y2,z2;	
-						get_two_normalized_orth_dirs(eff_field_x, eff_field_y, eff_field_z, 
-		       							     x1, y1, z1, 
-		       							     x2, y2, z2);
-						double sxnew=(costheta*eff_field_x)  + (sintheta*cos(phi)*x1)+ (sintheta*sin(phi)*x2);
-						double synew=(costheta*eff_field_y)  + (sintheta*cos(phi)*y1)+ (sintheta*sin(phi)*y2);
-						double sznew=(costheta*eff_field_z)  + (sintheta*cos(phi)*z1)+ (sintheta*sin(phi)*z2);
-						double mxdiff=(sxnew-sx)*spin;	
-						double mydiff=(synew-sy)*spin;
-						double mzdiff=(sznew-sz)*spin;
-						infos[b].configx[site]=sxnew;infos[b].configy[site]=synew;infos[b].configz[site]=sznew;
-						infos[b].mx+=mxdiff;infos[b].my+=mydiff;infos[b].mz+=mzdiff;
-						/*for (int i=0;i<infos[b].numqs;i++)
-						{
-							infos[b].sxq[i]+=(mxdiff*phases(i,site));
-							infos[b].syq[i]+=(mydiff*phases(i,site));
-							infos[b].szq[i]+=(mzdiff*phases(i,site));
-						}*/
-						// ediff=0 by construction!!
-					}
-			}
-	}	
-	else if (ntemps>1)  //50 % chance of doing replica exchange
-	{
-		nreplicatries+=1.0;	
-		///////////////////////////////////////////////////////////////////////
-		////////// Attempted exchange moves of parallel tempering
-		///////////////////////////////////////////////////////////////////////
-		// Metropolis move done, try swapping every 2 sweeps
-		for (int which1=0;which1<ntemps;which1++)
-		{
-			int which2=(which1+1)%(ntemps);
-			// Slight bias, if i try to swap serially ?
-			double rand=uniform_rnd();	
-			double beta_i=infos[which1].beta;
-			double beta_j=infos[which2].beta;
-			double energy_i=infos[which1].energy;
-			double energy_j=infos[which2].energy;
-			double power=(beta_j-beta_i)*(energy_i - energy_j);
-			double ratio=exp(-power);
-			if (rand<ratio)
-			{
-				// SWAP quantities which are being saved
-				std::vector<double> tempv;
-				double temp_energy, temp_mx, temp_my, temp_mz;
-				tempv=infos[which1].configx;	
-				infos[which1].configx=infos[which2].configx;	
-				infos[which2].configx=tempv;	
-				
-				tempv=infos[which1].configy;	
-				infos[which1].configy=infos[which2].configy;	
-				infos[which2].configy=tempv;	
-
-				tempv=infos[which1].configz;	
-				infos[which1].configz=infos[which2].configz;	
-				infos[which2].configz=tempv;	
-				
-				temp_energy=infos[which1].energy;	
-				infos[which1].energy=infos[which2].energy;	
-				infos[which2].energy=temp_energy;	
-				
-				temp_mx=infos[which1].mx;	
-				infos[which1].mx=infos[which2].mx;	
-				infos[which2].mx=temp_mx;	
-				
-				temp_my=infos[which1].my;	
-				infos[which1].my=infos[which2].my;	
-				infos[which2].my=temp_my;	
-				
-				temp_mz=infos[which1].mz;	
-				infos[which1].mz=infos[which2].mz;	
-				infos[which2].mz=temp_mz;
-				infos[which1].nswaps+=1.0;	
-				infos[which2].nswaps+=1.0;	
-				//nswaps+=1.0;	
-			}
-		}
-	}
-	if (n%nsites==0 and n>nburn) 
-	{
-		#pragma omp parallel for 
-		for (int num=0;num<infos.size();num++)
-		{
-			infos[num].update_totals();
-		}
-	}
-	if (n%nsites==0 or n==nburn+nsamples-1) cout<<boost::format("%+ .5f") %infos[0].energy<<endl;
-	}
-	cout<<"========================================================"<<endl;
-	cout<<endl;
-	#pragma omp parallel for 
-	for (int num=0;num<infos.size();num++)
-	{
-		infos[num].average();
-	}
-
-	for (int num=0;num<infos.size();num++)
-	{	
-		cout<<"================================================================================"<<endl;
-		cout<<"Nmeas    	= "<<boost::format("%+ .15f") %infos[num].nmeas<<endl;
-		cout<<"accept    	= "<<boost::format("%+ .15f") %(infos[num].accept/(infos[num].accept+infos[num].reject))<<endl;
-		cout<<"nswaps     	= "<<boost::format("%+ .15f") %(infos[num].nswaps/nreplicatries)<<endl;
-		cout<<"mxavg     	= "<<boost::format("%+ .15f") %infos[num].mxavg<<endl;
-		cout<<"myavg     	= "<<boost::format("%+ .15f") %infos[num].myavg<<endl;
-		cout<<"mzavg     	= "<<boost::format("%+ .15f") %infos[num].mzavg<<endl;
-		cout<<"mx2avg    	= "<<boost::format("%+ .15f") %infos[num].mx2avg<<endl;
-		cout<<"my2avg    	= "<<boost::format("%+ .15f") %infos[num].my2avg<<endl;
-		cout<<"mz2avg    	= "<<boost::format("%+ .15f") %infos[num].mz2avg<<endl;
-		cout<<"mx4avg    	= "<<boost::format("%+ .15f") %infos[num].mx4avg<<endl;
-		cout<<"my4avg    	= "<<boost::format("%+ .15f") %infos[num].my4avg<<endl;
-		cout<<"mz4avg    	= "<<boost::format("%+ .15f") %infos[num].mz4avg<<endl;
-		cout<<"eavg      	= "<<boost::format("%+ .15f") %infos[num].eavg<<endl;
-		cout<<"e2avg     	= "<<boost::format("%+ .15f") %infos[num].e2avg<<endl;
-		cout<<"e4avg     	= "<<boost::format("%+ .15f") %infos[num].e4avg<<endl;
-		cout<<"T (K)        	= "<<boost::format("%+ .15f") %infos[num].tempKelvin<<endl;
-		cout<<"Cv        	= "<<boost::format("%+ .15f") %infos[num].spheat<<endl;
-		cout<<"Cv/Ni(J/molK)	= "<<boost::format("%+ .15f") %infos[num].spheatpersite<<endl;
-		cout<<"Cvps(no dim)	= "<<boost::format("%+ .15f") %infos[num].spheatpersitenodim<<endl;
-		cout<<"================================================================================"<<endl;
-	}
-}
-
-
-void mc_pyrochlore_pt(double spin, int L,int64_t nsamples, int64_t nburn, string start_config, 
-		   string mcmove, double temp, int ntemps, double hx, double hy, double hz, 
-		   double J1, double J2, double J3, double J4, double Jnnn,
-		   double disorder_strength,
-		   double gxy, double gz, 
-		   double & eavg, 
-		   double &mxavg, double &myavg, double &mzavg, double &e2avg, 
-		   double &mx2avg, double &my2avg, double &mz2avg, bool &measure_corrs)
-{
-	/////////////////////////////////////////////////////////////////////////
-	// MC related quantities
-	// Units - Assume J in meV (millielectron volts)
-        //         Assume h in T   (tesla)
-        //         Convert h to meV units in total_h_energy and local_h_energy
-        // Convert temperature in Kelvin to temperature in meV
-	// Set 16xLxLxL pyrochlore lattice
-	int nsites=16*L*L*L;
-       	double kB=1.38064852*1e-23;
-        double NA=6.02214179*1e23;
-        double JpermeV=1.60218*1e-22; 
-	double tempKelvin=temp;
-        temp=tempKelvin*0.08621738;
-
-	/////////////////////////////////////////////////////////////////////////
-	// J and g matrices
-	
-	RMatrix Jmat01,Jmat02,Jmat03,Jmat12,Jmat13,Jmat23;
-	RMatrix Jmat10,Jmat20,Jmat30,Jmat21,Jmat31,Jmat32;
-	RMatrix gmat0,gmat1,gmat2,gmat3; 
-        RMatrix bond_disorder_matrix(nsites,nsites);
-	// Given J1, J2, J3, J4 - make J mats 
-	make_J_mats(J1,J2,J3,J4,Jmat01,Jmat10, Jmat02, Jmat20, Jmat03, Jmat30, Jmat12, Jmat21, Jmat13, Jmat31, Jmat23, Jmat32);
-	// Given g's - make g mats 
-	make_g_mats(gxy,gz,gmat0,gmat1,gmat2,gmat3);
-	std::vector<RMatrix> gmats;
-	gmats.push_back(gmat0);gmats.push_back(gmat1);gmats.push_back(gmat2);gmats.push_back(gmat3);
-
-	/////////////////////////////////////////////////////////////////////////
-	// MC related quantities
-	// Set nburn
-	nburn=nsamples;
-	cout<<"Nsamples = "<<nsamples<<endl;
-	cout<<"Nburn    = "<<nburn<<endl;
-	double e4avg,mx4avg,my4avg,mz4avg;
-	
-	/////////////////////////////////////////////////////////////////////////
-	// Set 16xLxLxL pyrochlore lattice
-	std::vector< std::vector<int> > neighbors(nsites);	
-	std::vector< std::vector<int> > nneighbors(nsites);	
-	std::vector< std::vector<double> > fullcoords;	
-	std::vector< std::vector<int> > ijkt;	
-        make_pyrochlore(L,fullcoords,ijkt,neighbors,nneighbors,measure_corrs);
-	// Make disorder matrix to be added to the Heisenberg couplings 
-	// Till here the seed will give the same sequence of random numbers
-        make_bond_disorder_matrix(disorder_strength,neighbors,bond_disorder_matrix);
-	
-	/////////////////////////////////////////////////////////////////////////
-	// Make random configuration of spins or selected type 
-	std::vector<QMC_Info> infos;
-	cout<<"Ntemps   = "<<ntemps<<endl;
-	double tmax=2.0;
-	double tmin=tempKelvin;
-	double tmax_over_tmin=tmax/tmin;
-
-	double exponent=pow(tmax_over_tmin,1.0/double(ntemps));
-	cout<<"exponent = "<<exponent<<endl;
-	for (int b=0;b<ntemps;b++)
-	{
-		QMC_Info qmc;
-		qmc.init(L,nsites,tempKelvin*pow(exponent,double(b)),measure_corrs);
-		infos.push_back(qmc);
-		cout<<"Beta = "<<infos[b].beta<<endl;
-		if (start_config=="random") make_random_config(nsites,infos[b].configx,infos[b].configy,infos[b].configz); 
-		if (start_config=="111")    make_111_config(nsites,infos[b].configx,infos[b].configy,infos[b].configz); 
-		if (start_config=="x")      make_x_config(nsites,infos[b].configx,infos[b].configy,infos[b].configz);
-	}
-	//Matrix phases;
-	//make_phases(fullcoords,infos[0].qvals,phases);
-
-	for (int b=0;b<ntemps;b++)
-	{
-		//if (measure_corrs) correlations(spin,configx,configy,configz,sxsxcorrs,sysycorrs,szszcorrs,sxsycorrs,sxszcorrs,syszcorrs);
-		double 		    energyj=total_j_energy(spin, infos[b].configx,infos[b].configy,infos[b].configz,
-								 neighbors,nneighbors,
-							   	 Jmat01, Jmat10, 
-							   	 Jmat02, Jmat20, 
-							   	 Jmat03, Jmat30, 
-							   	 Jmat12, Jmat21, 
-							   	 Jmat13, Jmat31, 
-							   	 Jmat23, Jmat32, Jnnn, bond_disorder_matrix, ijkt);
-		double 		    energyh=total_h_energy(spin, infos[b].configx, infos[b].configy, infos[b].configz, 
-							   hx,hy,hz, gmats , ijkt);
-		std::vector<double> magnetization=total_magnetization(spin, infos[b].configx, infos[b].configy, infos[b].configz, 
-								      gmats, ijkt);
-		infos[b].energy=energyj+energyh;
-		infos[b].mx=magnetization[0];infos[b].my=magnetization[1];infos[b].mz=magnetization[2];
-		cout<<"Total J energy                  ="<<energyj<<endl;
-		cout<<"Total h energy                  ="<<energyh<<endl;
-		cout<<"Total J energy + total h energy ="<<infos[b].energy<<endl;
-		cout<<"Total magnetization is          ="<<endl; print_vec_acc(magnetization,true);
-	}
-
-	cout<<endl;	
-	cout<<endl;	
-	cout<<"========================================================"<<endl;
-	cout<<"Energy history "<<endl;	
-	/////////////////////////////////////////////////////////////////////////
-	// Accept reject Metropolis
-	double accept=0.0;
-	double reject=0.0;
-	double nswaps=0.0;
-	double nreplicatries=0.0;
-	double elowest=0.0;
-	
-	for (int64_t n=0; n<(nsamples+(nburn));n++)
-	{
-	   if (n%nsites!=0 or ntemps==1) // Do usual Metropolis MC
-	   {
-			///////////////////////////////////////////////////////////////////////
-			// Usual Moves of a serial Metropolis Monte Carlo
-			///////////////////////////////////////////////////////////////////////
-			std::vector<double> rnd1,rnd2,rnd3,rnd4;
-			std::vector<int> rndints;
-		        // random numbers generated in advance
-			for (int b=0;b<ntemps;b++)
-			{
-				bool cond=false;
-				double r1,r2,d1,d2;
-				while (cond==false) // Problem if fixed random numbers given !!!!!!!!!
-				{
-					r1=uniform_rnd();
-					r2=uniform_rnd();
-					d1=(2.0*r1 - 1);	
-					d2=(2.0*r2 - 1);	
-					if (d1*d1 + d2*d2 <=1.0) cond=true; 
-				}
-				rnd1.push_back(r1);
-				rnd2.push_back(r2);
-				// First 2 rnds are drawn in a circle for the conical move to work
-				rnd3.push_back(uniform_rnd());
-				rnd4.push_back(uniform_rnd());
-				rndints.push_back(uniform_rand_int(0,nsites));
-			}
-			# pragma omp parallel for
-			for (int b=0;b<ntemps;b++)
-			{
-					// Very Small moves needed at low temperatures to increase acceptance rates
-					double move_size=min(0.3,0.1*(infos[0].beta)/(infos[b].beta));  
-					// Choose random site
-					int site=rndints[b];
-					int t=ijkt[site][3];
-					double sxnew,synew,sznew;
-					// Current sx,sy,sz on chosen site
-					double sx=infos[b].configx[site];double sy=infos[b].configy[site];double sz=infos[b].configz[site];						// Choose a completely random direction - This is INEFFICENT at low temps
-					//if (mcmove=="random")  random_move_continuous_spin(sxnew,synew,sznew);
-					// Choose a completely random direction within a cone
-					if (mcmove=="conical") conical_move_continuous_spin_rnds_provided(move_size,rnd1[b],rnd2[b],sx,sy,sz,sxnew,synew,sznew);
-					//if (mcmove=="infDspecial")    infD_move_special_continuous_spin(sx,sy,sz,sxnew,synew,sznew);
-					/*if (mcmove=="largeD")
-					{
-						double tempnum=rnd1[b];
-						if (tempnum>0.5) conical_move_continuous_spin(move_size,sx,sy,sz,sxnew,synew,sznew);
-						else	         big_move_continuous_spin(sx,sy,sz,sxnew,synew,sznew);
-					}*/	
-					// Normalize new direction
-					double norm=sqrt(sxnew*sxnew + synew*synew + sznew*sznew); 
-					sxnew=sxnew/norm; synew=synew/norm; sznew=sznew/norm;
-
-					// Calculate local energy of old and new configs
-					double eff_field_x, eff_field_y, eff_field_z;
-					local_j_energy(spin, site,t,sx,sy,sz,
-						       infos[b].configx,infos[b].configy,infos[b].configz, 
-						       neighbors, nneighbors,
-						       Jmat01,Jmat10, Jmat02,Jmat20, Jmat03, Jmat30, Jmat12, Jmat21, 
-						       Jmat13,Jmat31, Jmat23, Jmat32, Jnnn, bond_disorder_matrix, ijkt,
-						       eff_field_x, eff_field_y,eff_field_z);
-					double local_energyj1=( (sx*eff_field_x) + (sy*eff_field_y)+ (sz*eff_field_z))*spin*spin; 
-					double local_energyj2=( (sxnew*eff_field_x) + (synew*eff_field_y)+ (sznew*eff_field_z))*spin*spin; 
-					double mxdiff=(sxnew-sx)*spin;	
-					double mydiff=(synew-sy)*spin;
-					double mzdiff=(sznew-sz)*spin;
-							// Jterms                        // hterms - no field for now
-					double ediff=(local_energyj2-local_energyj1); //+ (local_energyh2-local_energyh1);
-					double beta; 
-					beta=infos[b].beta;
-					double prob=exp(-beta*ediff);
-					double rand=rnd3[b]; // random number previously generated
-					if (rand<prob) // Metropolis Accept-reject for a given temperature
-					{
-						if (b==0 and n>(nburn)) accept=accept+1.0;
-						// Reset configs to new configs, because accepted
-						infos[b].configx[site]=sxnew;infos[b].configy[site]=synew;infos[b].configz[site]=sznew;
-						infos[b].energy+=ediff;
-						//if (infos[b].energy<elowest) elowest=infos[b].energy;
-						infos[b].mx+=mxdiff;infos[b].my+=mydiff;infos[b].mz+=mzdiff;
-						/*for (int i=0;i<infos[b].numqs;i++)
-						{
-							infos[b].sxq[i]+=(mxdiff*phases(i,site));
-							infos[b].syq[i]+=(mydiff*phases(i,site));
-							infos[b].szq[i]+=(mzdiff*phases(i,site));
-						}*/
-					}
-					else
-					{
-					       	if (b==0 and n>(nburn)) reject=reject+1.0;
-						// Still move spin if rejected, but this conserves energy!!
-						double norm=(eff_field_x*eff_field_x)+(eff_field_y*eff_field_y)+(eff_field_z*eff_field_z);
-						norm=sqrt(norm);
-						eff_field_x=eff_field_x/norm;
-						eff_field_y=eff_field_y/norm;
-						eff_field_z=eff_field_z/norm;
-						double costheta=(sx*eff_field_x)+(sy*eff_field_y)+(sz*eff_field_z);
-						double sintheta=sqrt(1.0-(costheta*costheta));	
-						double phi=rnd4[b]*2.0*3.14159; // random in range 0 to 2 pi 
-										// random number previously generated
-						double x1,y1,z1, x2,y2,z2;	
-						get_two_normalized_orth_dirs(eff_field_x, eff_field_y, eff_field_z, 
-		       							     x1, y1, z1, 
-		       							     x2, y2, z2);
-						double sxnew=(costheta*eff_field_x)  + (sintheta*cos(phi)*x1)+ (sintheta*sin(phi)*x2);
-						double synew=(costheta*eff_field_y)  + (sintheta*cos(phi)*y1)+ (sintheta*sin(phi)*y2);
-						double sznew=(costheta*eff_field_z)  + (sintheta*cos(phi)*z1)+ (sintheta*sin(phi)*z2);
-						double mxdiff=(sxnew-sx)*spin;	
-						double mydiff=(synew-sy)*spin;
-						double mzdiff=(sznew-sz)*spin;
-						infos[b].configx[site]=sxnew;infos[b].configy[site]=synew;infos[b].configz[site]=sznew;
-						infos[b].mx+=mxdiff;infos[b].my+=mydiff;infos[b].mz+=mzdiff;
-						/*for (int i=0;i<infos[b].numqs;i++)
-						{
-							infos[b].sxq[i]+=(mxdiff*phases(i,site));
-							infos[b].syq[i]+=(mydiff*phases(i,site));
-							infos[b].szq[i]+=(mzdiff*phases(i,site));
-						}*/
-						// ediff=0 by construction!!
-					}
-			}
-	}	
-	else if (ntemps>1)  //50 % chance of doing replica exchange
-	{
-		nreplicatries+=1.0;	
-		///////////////////////////////////////////////////////////////////////
-		////////// Attempted exchange moves of parallel tempering
-		///////////////////////////////////////////////////////////////////////
-		// Metropolis move done, try swapping every 2 sweeps
-		for (int which1=0;which1<ntemps;which1++)
-		{
-			int which2=(which1+1)%(ntemps);
-			// Slight bias, if i try to swap serially ?
-			double rand=uniform_rnd();	
-			double beta_i=infos[which1].beta;
-			double beta_j=infos[which2].beta;
-			double energy_i=infos[which1].energy;
-			double energy_j=infos[which2].energy;
-			double power=(beta_j-beta_i)*(energy_i - energy_j);
-			double ratio=exp(-power);
-			if (rand<ratio)
-			{
-				// SWAP quantities which are being saved
-				std::vector<double> tempv;
-				double temp_energy, temp_mx, temp_my, temp_mz;
-				tempv=infos[which1].configx;	
-				infos[which1].configx=infos[which2].configx;	
-				infos[which2].configx=tempv;	
-				
-				tempv=infos[which1].configy;	
-				infos[which1].configy=infos[which2].configy;	
-				infos[which2].configy=tempv;	
-
-				tempv=infos[which1].configz;	
-				infos[which1].configz=infos[which2].configz;	
-				infos[which2].configz=tempv;	
-				
-				temp_energy=infos[which1].energy;	
-				infos[which1].energy=infos[which2].energy;	
-				infos[which2].energy=temp_energy;	
-				
-				temp_mx=infos[which1].mx;	
-				infos[which1].mx=infos[which2].mx;	
-				infos[which2].mx=temp_mx;	
-				
-				temp_my=infos[which1].my;	
-				infos[which1].my=infos[which2].my;	
-				infos[which2].my=temp_my;	
-				
-				temp_mz=infos[which1].mz;	
-				infos[which1].mz=infos[which2].mz;	
-				infos[which2].mz=temp_mz;
-				if (which1==0 or which2==0) nswaps+=1.0;	
-				//nswaps+=1.0;	
-			}
-		}
-	}
-	if (n%nsites==0 and n>nburn) infos[0].update_totals();
-	if (n%nsites==0 or n==nburn+nsamples-1) cout<<boost::format("%+ .5f") %infos[0].energy<<endl;
-	}
-	cout<<"========================================================"<<endl;
-	cout<<endl;
-	accept=accept/(accept+reject);
-	nswaps=nswaps/nreplicatries;
-	infos[0].average();
-	cout<<"elowest    	= "<<boost::format("%+ .15f") %elowest<<endl;
-	cout<<"Nmeas    	= "<<boost::format("%+ .15f") %infos[0].nmeas<<endl;
-	cout<<"accept    	= "<<boost::format("%+ .15f") %accept<<endl;
-	cout<<"nswaps (0)    	= "<<boost::format("%+ .15f") %nswaps<<endl;
-	cout<<"mxavg     	= "<<boost::format("%+ .15f") %infos[0].mxavg<<endl;
-	cout<<"myavg     	= "<<boost::format("%+ .15f") %infos[0].myavg<<endl;
-	cout<<"mzavg     	= "<<boost::format("%+ .15f") %infos[0].mzavg<<endl;
-	cout<<"mx2avg    	= "<<boost::format("%+ .15f") %infos[0].mx2avg<<endl;
-	cout<<"my2avg    	= "<<boost::format("%+ .15f") %infos[0].my2avg<<endl;
-	cout<<"mz2avg    	= "<<boost::format("%+ .15f") %infos[0].mz2avg<<endl;
-	cout<<"mx4avg    	= "<<boost::format("%+ .15f") %infos[0].mx4avg<<endl;
-	cout<<"my4avg    	= "<<boost::format("%+ .15f") %infos[0].my4avg<<endl;
-	cout<<"mz4avg    	= "<<boost::format("%+ .15f") %infos[0].mz4avg<<endl;
-	cout<<"eavg      	= "<<boost::format("%+ .15f") %infos[0].eavg<<endl;
-	cout<<"e2avg     	= "<<boost::format("%+ .15f") %infos[0].e2avg<<endl;
-	cout<<"e4avg     	= "<<boost::format("%+ .15f") %infos[0].e4avg<<endl;
-	cout<<"Cv        	= "<<boost::format("%+ .15f") %infos[0].spheat<<endl;
-	cout<<"Cv/Ni(J/molK)	= "<<boost::format("%+ .15f") %infos[0].spheatpersite<<endl;
-	cout<<"Cvps(no dim)	= "<<boost::format("%+ .15f") %infos[0].spheatpersitenodim<<endl;
-}
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-void mc_pyrochlore_groundstate(double spin, int L,int64_t nsamples, int64_t nburn, int wait, string start_config, 
-		   string mcmove, double temp, int ntemps, double hx, double hy, double hz, 
-		   double J1, double J2, double J3, double J4, double Jnnn,
-		   double disorder_strength,
-		   double gxy, double gz, 
-		   double & eavg, 
-		   double &mxavg, double &myavg, double &mzavg, double &e2avg, 
-		   double &mx2avg, double &my2avg, double &mz2avg, bool &measure_corrs)
-{
-	/////////////////////////////////////////////////////////////////////////
-	// MC related quantities
-	// Units - Assume J in meV (millielectron volts)
-        //         Assume h in T   (tesla)
-        //         Convert h to meV units in total_h_energy and local_h_energy
-        // Convert temperature in Kelvin to temperature in meV
-	// Set 16xLxLxL pyrochlore lattice
-	int nsites=16*L*L*L;
-       	double kB=1.38064852*1e-23;
-        double NA=6.02214179*1e23;
-        double JpermeV=1.60218*1e-22; 
-	double tempKelvin=temp;
-        temp=tempKelvin*0.08621738;
-
-	/////////////////////////////////////////////////////////////////////////
-	// J and g matrices
-	
-	RMatrix Jmat01,Jmat02,Jmat03,Jmat12,Jmat13,Jmat23;
-	RMatrix Jmat10,Jmat20,Jmat30,Jmat21,Jmat31,Jmat32;
-	RMatrix gmat0,gmat1,gmat2,gmat3; 
-        RMatrix bond_disorder_matrix(nsites,nsites);
-	// Given J1, J2, J3, J4 - make J mats 
-	make_J_mats(J1,J2,J3,J4,Jmat01,Jmat10, Jmat02, Jmat20, Jmat03, Jmat30, Jmat12, Jmat21, Jmat13, Jmat31, Jmat23, Jmat32);
-	// Given g's - make g mats 
-	make_g_mats(gxy,gz,gmat0,gmat1,gmat2,gmat3);
-	std::vector<RMatrix> gmats;
-	gmats.push_back(gmat0);gmats.push_back(gmat1);gmats.push_back(gmat2);gmats.push_back(gmat3);
-
-	/////////////////////////////////////////////////////////////////////////
-	// MC related quantities
-	// Set nburn
-	nburn=1;
-	cout<<"Nsamples = "<<nsamples<<endl;
-	cout<<"Nburn    = "<<nburn<<endl;
-	cout<<"Wait     = "<<wait<<endl;
-	double e4avg,mx4avg,my4avg,mz4avg;
-	
-	/////////////////////////////////////////////////////////////////////////
-	// Set 16xLxLxL pyrochlore lattice
-	std::vector< std::vector<int> > neighbors(nsites);	
-	std::vector< std::vector<int> > nneighbors(nsites);	
-	std::vector< std::vector<double> > fullcoords;	
-	std::vector< std::vector<int> > ijkt;	
-        make_pyrochlore(L,fullcoords,ijkt,neighbors,nneighbors,measure_corrs);
-	// Make disorder matrix to be added to the Heisenberg couplings 
-	// Till here the seed will give the same sequence of random numbers
-        make_bond_disorder_matrix(disorder_strength,neighbors,bond_disorder_matrix);
-	
-	// Now we EFFECTIVELY want a different seed. So we introduce a wait parameter
-	// which skips wait random numbers
-	//
-	//
-	for (int n=0;n<wait;n++) double r=uniform_rnd();
-	/////////////////////////////////////////////////////////////////////////
-	// Make random configuration of spins or selected type 
-	std::vector<QMC_Info> infos;
-	cout<<"Ntemps   = "<<ntemps<<endl;
-	double exponent=pow(100.0,1.0/double(ntemps)); // Tmax/Tmin=30
-	cout<<"exponent = "<<exponent<<endl;
-	for (int b=0;b<ntemps;b++)
-	{
-		QMC_Info qmc;
-		qmc.init(L,nsites,tempKelvin*pow(exponent,double(b)),measure_corrs);
-		infos.push_back(qmc);
-		cout<<"Beta = "<<infos[b].beta<<endl;
-		if (start_config=="random") make_random_config(nsites,infos[b].configx,infos[b].configy,infos[b].configz); 
-		if (start_config=="111")    make_111_config(nsites,infos[b].configx,infos[b].configy,infos[b].configz); 
-		if (start_config=="x")      make_x_config(nsites,infos[b].configx,infos[b].configy,infos[b].configz);
-	}
-	//Matrix phases;
-	//make_phases(fullcoords,infos[0].qvals,phases);
-
-	for (int b=0;b<ntemps;b++)
-	{
-		//if (measure_corrs) correlations(spin,configx,configy,configz,sxsxcorrs,sysycorrs,szszcorrs,sxsycorrs,sxszcorrs,syszcorrs);
-		double 		    energyj=total_j_energy(spin, infos[b].configx,infos[b].configy,infos[b].configz,
-								 neighbors,nneighbors,
-							   	 Jmat01, Jmat10, 
-							   	 Jmat02, Jmat20, 
-							   	 Jmat03, Jmat30, 
-							   	 Jmat12, Jmat21, 
-							   	 Jmat13, Jmat31, 
-							   	 Jmat23, Jmat32, Jnnn, bond_disorder_matrix, ijkt);
-		double 		    energyh=total_h_energy(spin, infos[b].configx, infos[b].configy, infos[b].configz, 
-							   hx,hy,hz, gmats , ijkt);
-		std::vector<double> magnetization=total_magnetization(spin, infos[b].configx, infos[b].configy, infos[b].configz, 
-								      gmats, ijkt);
-		infos[b].energy=energyj+energyh;
-		infos[b].mx=magnetization[0];infos[b].my=magnetization[1];infos[b].mz=magnetization[2];
-		cout<<"Total J energy                  ="<<energyj<<endl;
-		cout<<"Total h energy                  ="<<energyh<<endl;
-		cout<<"Total J energy + total h energy ="<<infos[b].energy<<endl;
-		cout<<"Total magnetization is          ="<<endl; print_vec_acc(magnetization,true);
-	}
-
-	cout<<endl;	
-	cout<<endl;	
-	cout<<"========================================================"<<endl;
-	cout<<"Energy history "<<endl;	
-	/////////////////////////////////////////////////////////////////////////
-	// Accept reject Metropolis
-	double accept=0.0;
-	double reject=0.0;
-	double nswaps=0.0;
-	double nreplicatries=0.0;
-	double elowest=0.0;
-	
-	for (int64_t n=0; n<(nsamples+(nburn));n++)
-	{
-	   if (n%nsites!=0 or ntemps==1) // Do usual Metropolis MC
-	   {
-			///////////////////////////////////////////////////////////////////////
-			// Usual Moves of a serial Metropolis Monte Carlo
-			///////////////////////////////////////////////////////////////////////
-			std::vector<double> rnd1,rnd2,rnd3,rnd4;
-			std::vector<int> rndints;
-		        // random numbers generated in advance
-			for (int b=0;b<ntemps;b++)
-			{
-				bool cond=false;
-				double r1,r2,d1,d2;
-				while (cond==false) // Problem if fixed random numbers given !!!!!!!!!
-				{
-					r1=uniform_rnd();
-					r2=uniform_rnd();
-					d1=(2.0*r1 - 1);	
-					d2=(2.0*r2 - 1);	
-					if (d1*d1 + d2*d2 <=1.0) cond=true; 
-				}
-				rnd1.push_back(r1);
-				rnd2.push_back(r2);
-				// First 2 rnds are drawn in a circle for the conical move to work
-				rnd3.push_back(uniform_rnd());
-				rnd4.push_back(uniform_rnd());
-				rndints.push_back(uniform_rand_int(0,nsites));
-			}
-			# pragma omp parallel for
-			for (int b=0;b<ntemps;b++)
-			{
-					// Very Small moves needed at low temperatures to increase acceptance rates
-					double move_size=min(0.3,0.1*(infos[0].beta)/(infos[b].beta));  
-					// Choose random site
-					int site=rndints[b];
-					int t=ijkt[site][3];
-					double sxnew,synew,sznew;
-					// Current sx,sy,sz on chosen site
-					double sx=infos[b].configx[site];double sy=infos[b].configy[site];double sz=infos[b].configz[site];						// Choose a completely random direction - This is INEFFICENT at low temps
-					//if (mcmove=="random")  random_move_continuous_spin(sxnew,synew,sznew);
-					// Choose a completely random direction within a cone
-					if (mcmove=="conical") conical_move_continuous_spin_rnds_provided(move_size,rnd1[b],rnd2[b],sx,sy,sz,sxnew,synew,sznew);
-					//if (mcmove=="infDspecial")    infD_move_special_continuous_spin(sx,sy,sz,sxnew,synew,sznew);
-					/*if (mcmove=="largeD")
-					{
-						double tempnum=rnd1[b];
-						if (tempnum>0.5) conical_move_continuous_spin(move_size,sx,sy,sz,sxnew,synew,sznew);
-						else	         big_move_continuous_spin(sx,sy,sz,sxnew,synew,sznew);
-					}*/	
-					// Normalize new direction
-					double norm=sqrt(sxnew*sxnew + synew*synew + sznew*sznew); 
-					sxnew=sxnew/norm; synew=synew/norm; sznew=sznew/norm;
-
-					// Calculate local energy of old and new configs
-					double eff_field_x, eff_field_y, eff_field_z;
-					local_j_energy(spin, site,t,sx,sy,sz,
-						       infos[b].configx,infos[b].configy,infos[b].configz, 
-						       neighbors, nneighbors,
-						       Jmat01,Jmat10, Jmat02,Jmat20, Jmat03, Jmat30, Jmat12, Jmat21, 
-						       Jmat13,Jmat31, Jmat23, Jmat32, Jnnn, bond_disorder_matrix, ijkt,
-						       eff_field_x, eff_field_y,eff_field_z);
-					double local_energyj1=( (sx*eff_field_x) + (sy*eff_field_y)+ (sz*eff_field_z))*spin*spin; 
-					double local_energyj2=( (sxnew*eff_field_x) + (synew*eff_field_y)+ (sznew*eff_field_z))*spin*spin; 
-					double mxdiff=(sxnew-sx)*spin;	
-					double mydiff=(synew-sy)*spin;
-					double mzdiff=(sznew-sz)*spin;
-							// Jterms                        // hterms - no field for now
-					double ediff=(local_energyj2-local_energyj1); //+ (local_energyh2-local_energyh1);
-					double beta; 
-					beta=infos[b].beta;
-					double prob=exp(-beta*ediff);
-					double rand=rnd3[b]; // random number previously generated
-					if (rand<prob) // Metropolis Accept-reject for a given temperature
-					{
-						if (b==0 and n>(nburn)) accept=accept+1.0;
-						// Reset configs to new configs, because accepted
-						infos[b].configx[site]=sxnew;infos[b].configy[site]=synew;infos[b].configz[site]=sznew;
-						infos[b].energy+=ediff;
-						//if (infos[b].energy<elowest) elowest=infos[b].energy;
-						infos[b].mx+=mxdiff;infos[b].my+=mydiff;infos[b].mz+=mzdiff;
-						/*for (int i=0;i<infos[b].numqs;i++)
-						{
-							infos[b].sxq[i]+=(mxdiff*phases(i,site));
-							infos[b].syq[i]+=(mydiff*phases(i,site));
-							infos[b].szq[i]+=(mzdiff*phases(i,site));
-						}*/
-					}
-					else
-					{
-					       	if (b==0 and n>(nburn)) reject=reject+1.0;
-						// Still move spin if rejected, but this conserves energy!!
-						double norm=(eff_field_x*eff_field_x)+(eff_field_y*eff_field_y)+(eff_field_z*eff_field_z);
-						norm=sqrt(norm);
-						eff_field_x=eff_field_x/norm;
-						eff_field_y=eff_field_y/norm;
-						eff_field_z=eff_field_z/norm;
-						double costheta=(sx*eff_field_x)+(sy*eff_field_y)+(sz*eff_field_z);
-						double sintheta=sqrt(1.0-(costheta*costheta));	
-						double phi=rnd4[b]*2.0*3.14159; // random in range 0 to 2 pi 
-										// random number previously generated
-						double x1,y1,z1, x2,y2,z2;	
-						get_two_normalized_orth_dirs(eff_field_x, eff_field_y, eff_field_z, 
-		       							     x1, y1, z1, 
-		       							     x2, y2, z2);
-						double sxnew=(costheta*eff_field_x)  + (sintheta*cos(phi)*x1)+ (sintheta*sin(phi)*x2);
-						double synew=(costheta*eff_field_y)  + (sintheta*cos(phi)*y1)+ (sintheta*sin(phi)*y2);
-						double sznew=(costheta*eff_field_z)  + (sintheta*cos(phi)*z1)+ (sintheta*sin(phi)*z2);
-						double mxdiff=(sxnew-sx)*spin;	
-						double mydiff=(synew-sy)*spin;
-						double mzdiff=(sznew-sz)*spin;
-						infos[b].configx[site]=sxnew;infos[b].configy[site]=synew;infos[b].configz[site]=sznew;
-						infos[b].mx+=mxdiff;infos[b].my+=mydiff;infos[b].mz+=mzdiff;
-						/*for (int i=0;i<infos[b].numqs;i++)
-						{
-							infos[b].sxq[i]+=(mxdiff*phases(i,site));
-							infos[b].syq[i]+=(mydiff*phases(i,site));
-							infos[b].szq[i]+=(mzdiff*phases(i,site));
-						}*/
-						// ediff=0 by construction!!
-					}
-			}
-	}	
-	else if (ntemps>1)  //50 % chance of doing replica exchange
-	{
-		nreplicatries+=1.0;	
-		///////////////////////////////////////////////////////////////////////
-		////////// Attempted exchange moves of parallel tempering
-		///////////////////////////////////////////////////////////////////////
-		// Metropolis move done, try swapping every 2 sweeps
-		for (int which1=0;which1<ntemps;which1++)
-		{
-			int which2=(which1+1)%(ntemps);
-			// Slight bias, if i try to swap serially ?
-			double rand=uniform_rnd();	
-			double beta_i=infos[which1].beta;
-			double beta_j=infos[which2].beta;
-			double energy_i=infos[which1].energy;
-			double energy_j=infos[which2].energy;
-			double power=(beta_j-beta_i)*(energy_i - energy_j);
-			double ratio=exp(-power);
-			if (rand<ratio)
-			{
-				// SWAP quantities which are being saved
-				std::vector<double> temp;
-				double temp_energy, temp_mx, temp_my, temp_mz;
-				temp=infos[which1].configx;	
-				infos[which1].configx=infos[which2].configx;	
-				infos[which2].configx=temp;	
-				
-				temp=infos[which1].configy;	
-				infos[which1].configy=infos[which2].configy;	
-				infos[which2].configy=temp;	
-
-				temp=infos[which1].configz;	
-				infos[which1].configz=infos[which2].configz;	
-				infos[which2].configz=temp;	
-				
-				temp_energy=infos[which1].energy;	
-				infos[which1].energy=infos[which2].energy;	
-				infos[which2].energy=temp_energy;	
-				
-				temp_mx=infos[which1].mx;	
-				infos[which1].mx=infos[which2].mx;	
-				infos[which2].mx=temp_mx;	
-				
-				temp_my=infos[which1].my;	
-				infos[which1].my=infos[which2].my;	
-				infos[which2].my=temp_my;	
-				
-				temp_mz=infos[which1].mz;	
-				infos[which1].mz=infos[which2].mz;	
-				infos[which2].mz=temp_mz;
-				if (which1==0 or which2==0) nswaps+=1.0;	
-				//nswaps+=1.0;	
-			}
-		}
-	}
-	if (n%nsites==0 or n==nburn+nsamples-1) cout<<boost::format("%+ .5f") %infos[0].energy<<endl;
-	}
-	cout<<"========================================================"<<endl;
-	cout<<endl;
-	accept=accept/(accept+reject);
-	nswaps=nswaps/nreplicatries;
-
-	///////////////////////////////////////////////////////////////////////////////////////////
-	cout<<"Started iterative minimization on lowest configurations in parallel"<<endl;
-	for (int64_t n=0; n<(nsamples+(nburn));n++)
-	{
-		//cout<<"Started iterative minimzation for configuration number "<<b<<" at beta = "<<infos[b].beta<<endl;
-		// random numbers generated in advance
-		std::vector<double> rnd1;
-		std::vector<int> rndints;
-		for (int b=0;b<ntemps;b++)
-		{
-			rnd1.push_back(uniform_rnd());
-			rndints.push_back(uniform_rand_int(0,nsites));
-		}
-		# pragma omp parallel for
-		for (int b=0;b<min(100,ntemps);b++)
-		{
-			int site=rndints[b];
-			double sx=infos[b].configx[site];
-			double sy=infos[b].configy[site];
-			double sz=infos[b].configz[site];
-			int t=ijkt[site][3];
-			// Calculate local energy of old and new configs
-			double eff_field_x, eff_field_y, eff_field_z;
-			local_j_energy(spin, site,t,sx,sy,sz,
-			infos[b].configx,infos[b].configy,infos[b].configz, 
-			neighbors, nneighbors,
-			Jmat01,Jmat10, Jmat02,Jmat20, Jmat03, Jmat30, Jmat12, Jmat21, 
-			Jmat13,Jmat31, Jmat23, Jmat32, Jnnn, bond_disorder_matrix, ijkt,
-			eff_field_x, eff_field_y,eff_field_z);
-			double norm=(eff_field_x*eff_field_x)+(eff_field_y*eff_field_y)+(eff_field_z*eff_field_z);
-			norm=sqrt(norm);
-			double r=0.5*rnd1[b];
-			double sxnew=((-eff_field_x/norm))*r + sx ;
-			double synew=((-eff_field_y/norm))*r + sy ;
-			double sznew=((-eff_field_z/norm))*r + sz ;
-			norm=(sxnew*sxnew) + (synew*synew) + (sznew*sznew);
-			norm=sqrt(norm);
-			sxnew=sxnew/norm; synew=synew/norm; sznew=sznew/norm;
-			double local_energyj1=( (sx*eff_field_x) + (sy*eff_field_y)+ (sz*eff_field_z))*spin*spin; 
-			double local_energyj2=( (sxnew*eff_field_x) + (synew*eff_field_y)+ (sznew*eff_field_z))*spin*spin; 
-			infos[b].energy+=(local_energyj2-local_energyj1);
-			infos[b].configx[site]=sxnew;
-			infos[b].configy[site]=synew;
-			infos[b].configz[site]=sznew;
-			double mxdiff=(sxnew-sx)*spin;	
-			double mydiff=(synew-sy)*spin;
-			double mzdiff=(sznew-sz)*spin;
-			infos[b].mx+=mxdiff;infos[b].my+=mydiff;infos[b].mz+=mzdiff;
-		}
-		if ((n%nsites==0 or n==nburn+nsamples-1) ) cout<<boost::format("%+ .5f") %infos[0].energy<<endl;
-	}
-
-	for (int b=0;b<min(100,ntemps);b++)
-	{	
-		cout<<"========================================================================================================================="<<endl;
-		cout<<"For configuration number "<<b<<" at beta = "<<infos[b].beta<<endl;
-		cout<<"========================================================================================================================="<<endl;
-		///////////////////////////////////////////////////////////////////////////////////////////
-		fourier_transforms_slow(spin,fullcoords,infos[b].qvals,infos[b].configx,infos[b].configy,infos[b].configz,infos[b].sxq,infos[b].syq,infos[b].szq);
-		infos[b].update_totals(); // Update totals - only last snapshot*/
-		// Only the lowest temperature is relevant for averages we are interested in 
-		infos[b].average();
-
-		std::vector<double> configx=infos[b].configx;
-		std::vector<double> configy=infos[b].configy;
-		std::vector<double> configz=infos[b].configz;
-
-		double invsqrt12=1.0/sqrt(12.0);
-		cout<<"========================================================================================================================="<<endl;
-		cout<<"    x            y             z             sx             sy             sz                                            "<<endl;
-		cout<<"========================================================================================================================="<<endl;
-		for (int i=0;i<nsites;i++) // Loop over all sites
-		{
-			cout<<boost::format("%+ .10f  %+ .10f  %+ .10f  %+ .10f   %+ .10f   %+ .10f") %fullcoords[i][0] %fullcoords[i][1] %fullcoords[i][2] %(configx[i]*spin) %(configy[i]*spin) %(configz[i]*spin) <<endl;
-
-		}
-		cout<<endl;
-		cout<<endl;
-
-		cout<<"========================================================================================================================="<<endl;
-		cout<<"    s01            s02             s03             s12             s13             s23            f0             f1          f2"<<endl;
-		cout<<"========================================================================================================================="<<endl;
-		for (int i=0;i<nsites;i+=4) // Loop over all up tetrahedra
-		{
-			double s00=(configx[i]*configx[i])+(configy[i]*configy[i])+(configz[i]*configz[i]);
-			double s01=(configx[i]*configx[i+1])+(configy[i]*configy[i+1])+(configz[i]*configz[i+1]);
-			double s02=(configx[i]*configx[i+2])+(configy[i]*configy[i+2])+(configz[i]*configz[i+2]);
-			double s03=(configx[i]*configx[i+3])+(configy[i]*configy[i+3])+(configz[i]*configz[i+3]);
-			double s11=(configx[i+1]*configx[i+1])+(configy[i+1]*configy[i+1])+(configz[i+1]*configz[i+1]);
-			double s12=(configx[i+1]*configx[i+2])+(configy[i+1]*configy[i+2])+(configz[i+1]*configz[i+2]);
-			double s13=(configx[i+1]*configx[i+3])+(configy[i+1]*configy[i+3])+(configz[i+1]*configz[i+3]);
-			double s22=(configx[i+2]*configx[i+2])+(configy[i+2]*configy[i+2])+(configz[i+2]*configz[i+2]);
-			double s23=(configx[i+2]*configx[i+3])+(configy[i+2]*configy[i+3])+(configz[i+2]*configz[i+3]);
-			double s33=(configx[i+3]*configx[i+3])+(configy[i+3]*configy[i+3])+(configz[i+3]*configz[i+3]);
-
-			double f0=((s00+s11+s22+s33)+(2.0*(s01+s02+s03+s12+s13+s23)))*spin*spin;
-			double f1=(s03+s12+s13+s02-(2.0*s01)-(2.0*s23))*invsqrt12*spin*spin;
-			double f2=((s13+s02-s03-s12)/2.0)*spin*spin;
-			
-			cout<<boost::format("%+ .10f  %+ .10f  %+ .10f  %+ .10f   %+ .10f   %+ .10f   %+ .10f   %+ .10f   %+ .10f") %s01 %s02 %s03 %s12 %s13 %s23 %f0 %f1 %f2<<endl;
-
-		}
-		cout<<endl;
-		cout<<endl;
-
-		//cout<<"elowest    	= "<<boost::format("%+ .15f") %elowest<<endl;
-		cout<<"Nmeas    	= "<<boost::format("%+ .15f") %infos[b].nmeas<<endl;
-		cout<<"accept    	= "<<boost::format("%+ .15f") %accept<<endl;
-		cout<<"nswaps (0)    	= "<<boost::format("%+ .15f") %nswaps<<endl;
-		cout<<"mxavg     	= "<<boost::format("%+ .15f") %infos[b].mxavg<<endl;
-		cout<<"myavg     	= "<<boost::format("%+ .15f") %infos[b].myavg<<endl;
-		cout<<"mzavg     	= "<<boost::format("%+ .15f") %infos[b].mzavg<<endl;
-		cout<<"mx2avg    	= "<<boost::format("%+ .15f") %infos[b].mx2avg<<endl;
-		cout<<"my2avg    	= "<<boost::format("%+ .15f") %infos[b].my2avg<<endl;
-		cout<<"mz2avg    	= "<<boost::format("%+ .15f") %infos[b].mz2avg<<endl;
-		cout<<"mx4avg    	= "<<boost::format("%+ .15f") %infos[b].mx4avg<<endl;
-		cout<<"my4avg    	= "<<boost::format("%+ .15f") %infos[b].my4avg<<endl;
-		cout<<"mz4avg    	= "<<boost::format("%+ .15f") %infos[b].mz4avg<<endl;
-		cout<<"eavg      	= "<<boost::format("%+ .15f") %infos[b].eavg<<endl;
-		cout<<"e2avg     	= "<<boost::format("%+ .15f") %infos[b].e2avg<<endl;
-		cout<<"e4avg     	= "<<boost::format("%+ .15f") %infos[b].e4avg<<endl;
-		cout<<"Cv        	= "<<boost::format("%+ .15f") %infos[b].spheat<<endl;
-		cout<<"Cv/Ni(J/molK)	= "<<boost::format("%+ .15f") %infos[b].spheatpersite<<endl;
-		cout<<"Cvps(no dim)	= "<<boost::format("%+ .15f") %infos[b].spheatpersitenodim<<endl;
-		
-		cout<<"========================================================================================================================="<<endl;
-		cout<<" h      k      l     SXX(Q)    SXY(Q)    SXZ(Q)    SYX(Q)     SYY(Q)     SYZ(Q)     SZX(Q)     SZY(Q)     SZZ(Q)         "<<endl;
-		cout<<"========================================================================================================================="<<endl;
-		for (int i=0;i<infos[b].numqs;i++)
-		{
-		cout<<boost::format("%+ .5f  %+ .5f  %+ .5f  %+ .5f   %+ .5f   %+ .5f   %+ .5f   %+ .5f   %+ .5f  %+ .5f  %+ .5f %+ .5f") %infos[b].qvals[i][0] %infos[b].qvals[i][1] %infos[b].qvals[i][2] %infos[b].sxsxtot[i] %infos[b].sxsytot[i] %infos[b].sxsztot[i] %infos[b].sysxtot[i] %infos[b].sysytot[i] %infos[b].sysztot[i] %infos[b].szsxtot[i] %infos[b].szsytot[i] %infos[b].szsztot[i]<<endl;
-			
-		}
-		cout<<endl;
-		cout<<endl;
-	}
-
-	
-	// AVERAGED DATA	
-	int numqs=infos[0].qvals.size();
-	std::vector<complex<double> > allsxsxtot(numqs);
-	std::vector<complex<double> > allsxsytot(numqs);
-	std::vector<complex<double> > allsxsztot(numqs);
-	
-	std::vector<complex<double> > allsysxtot(numqs);
-	std::vector<complex<double> > allsysytot(numqs);
-	std::vector<complex<double> > allsysztot(numqs);
-	
-	std::vector<complex<double> > allszsxtot(numqs);
-	std::vector<complex<double> > allszsytot(numqs);
-	std::vector<complex<double> > allszsztot(numqs);
-	
-	for (int b=0;b<min(100,ntemps);b++)
-	{
-		#pragma omp parallel for
-		for (int nq=0;nq<infos[b].qvals.size();nq++)
-		{
-			allsxsxtot[nq]+=infos[b].sxsxtot[nq];
-			allsxsytot[nq]+=infos[b].sxsytot[nq];
-			allsxsztot[nq]+=infos[b].sxsztot[nq];
-		
-			allsysxtot[nq]+=infos[b].sysxtot[nq];
-			allsysytot[nq]+=infos[b].sysytot[nq];
-			allsysztot[nq]+=infos[b].sysztot[nq];
-			
-			allszsxtot[nq]+=infos[b].szsxtot[nq];
-			allszsytot[nq]+=infos[b].szsytot[nq];
-			allszsztot[nq]+=infos[b].szsztot[nq];
-		}
-	}
-
-	int nconfigs=min(100,ntemps);
-	
-	#pragma omp parallel for
-	for (int nq=0;nq<numqs;nq++)
-	{
-		allsxsxtot[nq]=allsxsxtot[nq]/double(nconfigs);
-		allsxsytot[nq]=allsxsytot[nq]/double(nconfigs);
-		allsxsztot[nq]=allsxsztot[nq]/double(nconfigs);
-	
-		allsysxtot[nq]=allsysxtot[nq]/double(nconfigs);
-		allsysytot[nq]=allsysytot[nq]/double(nconfigs);
-		allsysztot[nq]=allsysztot[nq]/double(nconfigs);
-		
-		allszsxtot[nq]=allszsxtot[nq]/double(nconfigs);
-		allszsytot[nq]=allszsytot[nq]/double(nconfigs);
-		allszsztot[nq]=allszsztot[nq]/double(nconfigs);
-	}
-	
-	cout<<"========================================================================================================================="<<endl;
-	cout<<"                                  AVERAGED  DATA                                                                         "<<endl;
-	cout<<"========================================================================================================================="<<endl;
-	cout<<" h      k      l     SXX(Q)    SXY(Q)    SXZ(Q)    SYX(Q)     SYY(Q)     SYZ(Q)     SZX(Q)     SZY(Q)     SZZ(Q)         "<<endl;
-	cout<<"========================================================================================================================="<<endl;
-	for (int i=0;i<numqs;i++)
-	{
-		cout<<boost::format("%+ .5f  %+ .5f  %+ .5f  %+ .5f   %+ .5f   %+ .5f   %+ .5f   %+ .5f   %+ .5f  %+ .5f  %+ .5f %+ .5f") %infos[0].qvals[i][0] %infos[0].qvals[i][1] %infos[0].qvals[i][2] %allsxsxtot[i] %allsxsytot[i] %allsxsztot[i] %allsysxtot[i] %allsysytot[i] %allsysztot[i] %allszsxtot[i] %allszsytot[i] %allszsztot[i]<<endl;
-			
-	}
-}
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//void mc_pyrochlore_slowcool(double spin, int L,int64_t nsamples, int64_t nburn, string start_config, 
+//		   string mcmove, double temp, int ntemps, double hx, double hy, double hz, 
+//		   double J1, double J2, double J3, double J4, double Jnnn,
+//		   double disorder_strength,
+//		   double gxy, double gz, 
+//		   double & eavg, 
+//		   double &mxavg, double &myavg, double &mzavg, double &e2avg, 
+//		   double &mx2avg, double &my2avg, double &mz2avg, bool &measure_corrs)
+//{
+//	/////////////////////////////////////////////////////////////////////////
+//	// MC related quantities
+//	// Units - Assume J in meV (millielectron volts)
+//        //         Assume h in T   (tesla)
+//        //         Convert h to meV units in total_h_energy and local_h_energy
+//        // Convert temperature in Kelvin to temperature in meV
+//	// Set 16xLxLxL pyrochlore lattice
+//	int nsites=16*L*L*L;
+//       	double kB=1.38064852*1e-23;
+//        double NA=6.02214179*1e23;
+//        double JpermeV=1.60218*1e-22; 
+//	double tempKelvin=temp;
+//        temp=tempKelvin*0.08621738;
+//
+//	/////////////////////////////////////////////////////////////////////////
+//	// J and g matrices
+//	
+//	RMatrix Jmat01,Jmat02,Jmat03,Jmat12,Jmat13,Jmat23;
+//	RMatrix Jmat10,Jmat20,Jmat30,Jmat21,Jmat31,Jmat32;
+//	RMatrix gmat0,gmat1,gmat2,gmat3; 
+//        RMatrix bond_disorder_matrix(nsites,nsites);
+//	// Given J1, J2, J3, J4 - make J mats 
+//	make_J_mats(J1,J2,J3,J4,Jmat01,Jmat10, Jmat02, Jmat20, Jmat03, Jmat30, Jmat12, Jmat21, Jmat13, Jmat31, Jmat23, Jmat32);
+//	// Given g's - make g mats 
+//	make_g_mats(gxy,gz,gmat0,gmat1,gmat2,gmat3);
+//	std::vector<RMatrix> gmats;
+//	gmats.push_back(gmat0);gmats.push_back(gmat1);gmats.push_back(gmat2);gmats.push_back(gmat3);
+//
+//	/////////////////////////////////////////////////////////////////////////
+//	// MC related quantities
+//	// Set nburn
+//	nburn=nsamples;
+//	cout<<"Nsamples = "<<nsamples<<endl;
+//	cout<<"Nburn    = "<<nburn<<endl;
+//	double e4avg,mx4avg,my4avg,mz4avg;
+//	
+//	/////////////////////////////////////////////////////////////////////////
+//	// Set 16xLxLxL pyrochlore lattice
+//	std::vector< std::vector<int> > neighbors(nsites);	
+//	std::vector< std::vector<int> > nneighbors(nsites);	
+//	std::vector< std::vector<double> > fullcoords;	
+//	std::vector< std::vector<int> > ijkt;	
+//        make_pyrochlore(L,fullcoords,ijkt,neighbors,nneighbors,measure_corrs);
+//	// Make disorder matrix to be added to the Heisenberg couplings 
+//	make_bond_disorder_matrix(disorder_strength,neighbors,bond_disorder_matrix);
+//	
+//	/////////////////////////////////////////////////////////////////////////
+//	// Make random configuration of spins or selected type 
+//	ntemps=1;
+//	std::vector<QMC_Info> infos;
+//	cout<<"Ntemps   = "<<ntemps<<endl;
+//	double exponent=pow(100.0,1.0/double(ntemps)); // Tmax/Tmin=30
+//	cout<<"exponent = "<<exponent<<endl;
+//	for (int b=0;b<ntemps;b++)
+//	{
+//		QMC_Info qmc;
+//		qmc.init(L,nsites,tempKelvin*pow(exponent,double(b)),measure_corrs);
+//		infos.push_back(qmc);
+//		cout<<"Beta = "<<infos[b].beta<<endl;
+//		if (start_config=="random") make_random_config(nsites,infos[b].configx,infos[b].configy,infos[b].configz); 
+//		if (start_config=="111")    make_111_config(nsites,infos[b].configx,infos[b].configy,infos[b].configz); 
+//		if (start_config=="x")      make_x_config(nsites,infos[b].configx,infos[b].configy,infos[b].configz);
+//	}
+//	Matrix phases;
+//	make_phases(fullcoords,infos[0].qvals,phases);
+//
+//	
+//	for (int b=0;b<ntemps;b++)
+//	{
+//		//if (measure_corrs) correlations(spin,configx,configy,configz,sxsxcorrs,sysycorrs,szszcorrs,sxsycorrs,sxszcorrs,syszcorrs);
+//		double 		    energyj=total_j_energy(spin, infos[b].configx,infos[b].configy,infos[b].configz,
+//								 neighbors,nneighbors,
+//							   	 Jmat01, Jmat10, 
+//							   	 Jmat02, Jmat20, 
+//							   	 Jmat03, Jmat30, 
+//							   	 Jmat12, Jmat21, 
+//							   	 Jmat13, Jmat31, 
+//							   	 Jmat23, Jmat32, Jnnn, bond_disorder_matrix, ijkt);
+//		double 		    energyh=total_h_energy(spin, infos[b].configx, infos[b].configy, infos[b].configz, 
+//							   hx,hy,hz, gmats , ijkt);
+//		std::vector<double> magnetization=total_magnetization(spin, infos[b].configx, infos[b].configy, infos[b].configz, 
+//								      gmats, ijkt);
+//		fourier_transforms(spin,phases,infos[b].configx,infos[b].configy,infos[b].configz,infos[b].sxq,infos[b].syq,infos[b].szq);
+//		infos[b].energy=energyj+energyh;
+//		infos[b].mx=magnetization[0];infos[b].my=magnetization[1];infos[b].mz=magnetization[2];
+//		cout<<"Total J energy                  ="<<energyj<<endl;
+//		cout<<"Total h energy                  ="<<energyh<<endl;
+//		cout<<"Total J energy + total h energy ="<<infos[b].energy<<endl;
+//		cout<<"Total magnetization is          ="<<endl; print_vec_acc(magnetization,true);
+//		cout<<"Total magnetization (from FT is)="<<endl; cout<<infos[b].sxq[0]<<"  "<<infos[b].syq[0]<<"  "<<infos[b].szq[0]<<endl;
+//	}
+//
+//	cout<<endl;	
+//	cout<<endl;	
+//	cout<<"========================================================"<<endl;
+//	cout<<"Energy history "<<endl;	
+//	/////////////////////////////////////////////////////////////////////////
+//	// Accept reject Metropolis
+//	double accept=0.0;
+//	double reject=0.0;
+//	double nswaps=0.0;
+//	double nreplicatries=0.0;
+//	double elowest=0.0;
+//	for (int64_t n=0; n<(nsamples+nburn);n++)
+//	{
+//		///////////////////////////////////////////////////////////////////////
+//		// Usual Moves of a serial Metropolis Monte Carlo
+//		///////////////////////////////////////////////////////////////////////
+//		int b=0;
+//		// Very Small moves needed at low temperatures to increase acceptance rates
+//		double move_size=0.3;  
+//		// Choose random site
+//		int site=uniform_rand_int(0,nsites);
+//		int t=ijkt[site][3];
+//		double sxnew,synew,sznew;
+//		// Current sx,sy,sz on chosen site
+//		double sx=infos[b].configx[site];double sy=infos[b].configy[site];double sz=infos[b].configz[site];						// Choose a completely random direction - This is INEFFICENT at low temps
+//		if (mcmove=="random")  random_move_continuous_spin(sxnew,synew,sznew);
+//		// Choose a completely random direction within a cone
+//		if (mcmove=="conical") conical_move_continuous_spin(move_size,sx,sy,sz,sxnew,synew,sznew);
+//		if (mcmove=="infDspecial")    infD_move_special_continuous_spin(sx,sy,sz,sxnew,synew,sznew);
+//		if (mcmove=="largeD")
+//		{
+//			double tempnum=uniform_rnd();
+//			if (tempnum>0.5) conical_move_continuous_spin(move_size,sx,sy,sz,sxnew,synew,sznew);
+//			else	         big_move_continuous_spin(sx,sy,sz,sxnew,synew,sznew);
+//		}	
+//		// Normalize new direction
+//		double norm=sqrt(sxnew*sxnew + synew*synew + sznew*sznew); 
+//		sxnew=sxnew/norm; synew=synew/norm; sznew=sznew/norm;
+//
+//		// Calculate local energy of old and new configs
+//		double eff_field_x, eff_field_y, eff_field_z;
+//		local_j_energy(spin, site,t,sx,sy,sz,
+//			       infos[b].configx,infos[b].configy,infos[b].configz, 
+//			       neighbors, nneighbors,
+//			       Jmat01,Jmat10, Jmat02,Jmat20, Jmat03, Jmat30, Jmat12, Jmat21, 
+//			       Jmat13,Jmat31, Jmat23, Jmat32, Jnnn, bond_disorder_matrix, ijkt,
+//			       eff_field_x, eff_field_y,eff_field_z);
+//		double local_energyj1=( (sx*eff_field_x) + (sy*eff_field_y)+ (sz*eff_field_z))*spin*spin; 
+//		double local_energyj2=( (sxnew*eff_field_x) + (synew*eff_field_y)+ (sznew*eff_field_z))*spin*spin; 
+//		double mxdiff=(sxnew-sx)*spin;	
+//		double mydiff=(synew-sy)*spin;
+//		double mzdiff=(sznew-sz)*spin;
+//				// Jterms                        // hterms - no field for now
+//		double ediff=(local_energyj2-local_energyj1); //+ (local_energyh2-local_energyh1);
+//		double beta=infos[b].beta; 
+//		if (n<nburn/2) beta=infos[b].beta*(2.0*double(n)/double(nburn));
+//		double prob=exp(-beta*ediff);
+//		double rand=uniform_rnd();
+//		if (rand<prob) // Metropolis Accept-reject for a given temperature
+//		{
+//			if (b==0 and n>(nburn)) accept=accept+1.0;
+//			// Reset configs to new configs, because accepted
+//			infos[b].configx[site]=sxnew;infos[b].configy[site]=synew;infos[b].configz[site]=sznew;
+//			infos[b].energy+=ediff;
+//			if (infos[b].energy<elowest) elowest=infos[b].energy;
+//			infos[b].mx+=mxdiff;infos[b].my+=mydiff;infos[b].mz+=mzdiff;
+//			if (n>nburn and measure_corrs==true) // Updating needed only when measuring
+//			{
+//				#pragma omp parallel for
+//				for (int i=0;i<infos[b].numqs;i++)
+//				{
+//					infos[b].sxq[i]+=(mxdiff*phases(i,site));
+//					infos[b].syq[i]+=(mydiff*phases(i,site));
+//					infos[b].szq[i]+=(mzdiff*phases(i,site));
+//				}
+//			}
+//		}
+//		else
+//		{
+//			if (b==0 and n>(nburn)) reject=reject+1.0;
+//			// Still move spin if rejected, but this conserves energy!!
+//			double norm=(eff_field_x*eff_field_x)+(eff_field_y*eff_field_y)+(eff_field_z*eff_field_z);
+//			norm=sqrt(norm);
+//			eff_field_x=eff_field_x/norm;
+//			eff_field_y=eff_field_y/norm;
+//			eff_field_z=eff_field_z/norm;
+//			double costheta=(sx*eff_field_x)+(sy*eff_field_y)+(sz*eff_field_z);
+//			double sintheta=sqrt(1.0-(costheta*costheta));	
+//			double phi=uniform_rnd()*2.0*3.14159; // random in range 0 to 2 pi
+//			double x1,y1,z1, x2,y2,z2;	
+//			get_two_normalized_orth_dirs(eff_field_x, eff_field_y, eff_field_z, 
+//						     x1, y1, z1, 
+//						     x2, y2, z2);
+//			double sxnew=(costheta*eff_field_x)  + (sintheta*cos(phi)*x1)+ (sintheta*sin(phi)*x2);
+//			double synew=(costheta*eff_field_y)  + (sintheta*cos(phi)*y1)+ (sintheta*sin(phi)*y2);
+//			double sznew=(costheta*eff_field_z)  + (sintheta*cos(phi)*z1)+ (sintheta*sin(phi)*z2);
+//			double mxdiff=(sxnew-sx)*spin;	
+//			double mydiff=(synew-sy)*spin;
+//			double mzdiff=(sznew-sz)*spin;
+//			infos[b].configx[site]=sxnew;infos[b].configy[site]=synew;infos[b].configz[site]=sznew;
+//			infos[b].mx+=mxdiff;infos[b].my+=mydiff;infos[b].mz+=mzdiff;
+//			if (n>nburn and measure_corrs==true) // Updating needed only when measuring
+//			{
+//				#pragma omp parallel for
+//				for (int i=0;i<infos[b].numqs;i++)
+//				{
+//					infos[b].sxq[i]+=(mxdiff*phases(i,site));
+//					infos[b].syq[i]+=(mydiff*phases(i,site));
+//					infos[b].szq[i]+=(mzdiff*phases(i,site));
+//				}
+//			}
+//			// ediff=0 by construction!!
+//		}
+//		// Structure factors not needed before measurement stage
+//		if (n==nburn and measure_corrs==true) fourier_transforms(spin,phases,infos[b].configx,infos[b].configy,infos[b].configz,infos[b].sxq,infos[b].syq,infos[b].szq);
+//		if (n>nburn and n%nsites==0) infos[0].update_totals(); // Update averages - after 1 sweep and after equilibration done 
+//		if (n%nsites==0 or n==nburn+nsamples-1) cout<<boost::format("%+ .5f") %infos[0].energy<<endl;
+//	}
+//	cout<<"========================================================"<<endl;
+//	cout<<endl;
+//	accept=accept/(accept+reject);
+//	// Only the lowest temperature is relevant for averages we are interested in 
+//	infos[0].average();
+//	cout<<"elowest    	= "<<boost::format("%+ .15f") %elowest<<endl;
+//	cout<<"Nmeas    	= "<<boost::format("%+ .15f") %infos[0].nmeas<<endl;
+//	cout<<"accept    	= "<<boost::format("%+ .15f") %accept<<endl;
+//	cout<<"nswaps (0)    	= "<<boost::format("%+ .15f") %nswaps<<endl;
+//	cout<<"mxavg     	= "<<boost::format("%+ .15f") %infos[0].mxavg<<endl;
+//	cout<<"myavg     	= "<<boost::format("%+ .15f") %infos[0].myavg<<endl;
+//	cout<<"mzavg     	= "<<boost::format("%+ .15f") %infos[0].mzavg<<endl;
+//	cout<<"mx2avg    	= "<<boost::format("%+ .15f") %infos[0].mx2avg<<endl;
+//	cout<<"my2avg    	= "<<boost::format("%+ .15f") %infos[0].my2avg<<endl;
+//	cout<<"mz2avg    	= "<<boost::format("%+ .15f") %infos[0].mz2avg<<endl;
+//	cout<<"mx4avg    	= "<<boost::format("%+ .15f") %infos[0].mx4avg<<endl;
+//	cout<<"my4avg    	= "<<boost::format("%+ .15f") %infos[0].my4avg<<endl;
+//	cout<<"mz4avg    	= "<<boost::format("%+ .15f") %infos[0].mz4avg<<endl;
+//	cout<<"eavg      	= "<<boost::format("%+ .15f") %infos[0].eavg<<endl;
+//	cout<<"e2avg     	= "<<boost::format("%+ .15f") %infos[0].e2avg<<endl;
+//	cout<<"e4avg     	= "<<boost::format("%+ .15f") %infos[0].e4avg<<endl;
+//	cout<<"Cv        	= "<<boost::format("%+ .15f") %infos[0].spheat<<endl;
+//	cout<<"Cv/Ni(J/molK)	= "<<boost::format("%+ .15f") %infos[0].spheatpersite<<endl;
+//	cout<<"Cvps(no dim)	= "<<boost::format("%+ .15f") %infos[0].spheatpersitenodim<<endl;
+//
+//	if (measure_corrs==true)
+//	{	
+//		cout<<"========================================================================================================================="<<endl;
+//		cout<<" h      k      l     SXX(Q)    SXY(Q)    SXZ(Q)    SYX(Q)     SYY(Q)     SYZ(Q)     SZX(Q)     SZY(Q)     SZZ(Q)         "<<endl;
+//		cout<<"========================================================================================================================="<<endl;
+//		for (int i=0;i<infos[0].numqs;i++)
+//		{
+//		cout<<boost::format("%+ .5f  %+ .5f  %+ .5f  %+ .5f   %+ .5f   %+ .5f   %+ .5f   %+ .5f   %+ .5f  %+ .5f  %+ .5f %+ .5f") %infos[0].qvals[i][0] %infos[0].qvals[i][1] %infos[0].qvals[i][2] %infos[0].sxsxtot[i] %infos[0].sxsytot[i] %infos[0].sxsztot[i] %infos[0].sysxtot[i] %infos[0].sysytot[i] %infos[0].sysztot[i] %infos[0].szsxtot[i] %infos[0].szsytot[i] %infos[0].szsztot[i]<<endl;
+//			
+//		}
+//	}
+//}
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//void mc_pyrochlore_ptall(double spin, int L,int64_t nsamples, int64_t nburn, string start_config, 
+//		   string mcmove, double tminKelvin, double tmaxKelvin, int ntemps, double hx, double hy, double hz, 
+//		   double J1, double J2, double J3, double J4, double Jnnn,
+//		   double disorder_strength,
+//		   double gxy, double gz, 
+//		   double & eavg, 
+//		   double &mxavg, double &myavg, double &mzavg, double &e2avg, 
+//		   double &mx2avg, double &my2avg, double &mz2avg, bool &measure_corrs)
+//{
+//	/////////////////////////////////////////////////////////////////////////
+//	// MC related quantities
+//	// Units - Assume J in meV (millielectron volts)
+//        //         Assume h in T   (tesla)
+//        //         Convert h to meV units in total_h_energy and local_h_energy
+//        // Convert temperature in Kelvin to temperature in meV
+//	// Set 16xLxLxL pyrochlore lattice
+//	int nsites=16*L*L*L;
+//       	double kB=1.38064852*1e-23;
+//        double NA=6.02214179*1e23;
+//        double JpermeV=1.60218*1e-22; 
+//	/////////////////////////////////////////////////////////////////////////
+//	// J and g matrices
+//	
+//	RMatrix Jmat01,Jmat02,Jmat03,Jmat12,Jmat13,Jmat23;
+//	RMatrix Jmat10,Jmat20,Jmat30,Jmat21,Jmat31,Jmat32;
+//	RMatrix gmat0,gmat1,gmat2,gmat3; 
+//        RMatrix bond_disorder_matrix(nsites,nsites);
+//	// Given J1, J2, J3, J4 - make J mats 
+//	make_J_mats(J1,J2,J3,J4,Jmat01,Jmat10, Jmat02, Jmat20, Jmat03, Jmat30, Jmat12, Jmat21, Jmat13, Jmat31, Jmat23, Jmat32);
+//	// Given g's - make g mats 
+//	make_g_mats(gxy,gz,gmat0,gmat1,gmat2,gmat3);
+//	std::vector<RMatrix> gmats;
+//	gmats.push_back(gmat0);gmats.push_back(gmat1);gmats.push_back(gmat2);gmats.push_back(gmat3);
+//
+//	/////////////////////////////////////////////////////////////////////////
+//	// MC related quantities
+//	// Set nburn
+//	nburn=nsamples;
+//	cout<<"Nsamples = "<<nsamples<<endl;
+//	cout<<"Nburn    = "<<nburn<<endl;
+//	double e4avg,mx4avg,my4avg,mz4avg;
+//	
+//	/////////////////////////////////////////////////////////////////////////
+//	// Set 16xLxLxL pyrochlore lattice
+//	std::vector< std::vector<int> > neighbors(nsites);	
+//	std::vector< std::vector<int> > nneighbors(nsites);	
+//	std::vector< std::vector<double> > fullcoords;	
+//	std::vector< std::vector<int> > ijkt;	
+//        make_pyrochlore(L,fullcoords,ijkt,neighbors,nneighbors,measure_corrs);
+//	// Make disorder matrix to be added to the Heisenberg couplings 
+//	// Till here the seed will give the same sequence of random numbers
+//        make_bond_disorder_matrix(disorder_strength,neighbors,bond_disorder_matrix);
+//	
+//	/////////////////////////////////////////////////////////////////////////
+//	// Make random configuration of spins or selected type 
+//	std::vector<QMC_Info> infos;
+//	cout<<"Ntemps   = "<<ntemps<<endl;
+//	double tmax_over_tmin=tmaxKelvin/tminKelvin;
+//
+//	double exponent=1.0; 
+//	if (ntemps>1) exponent=pow(tmax_over_tmin,1.0/double(ntemps-1));
+//	
+//	cout<<"exponent = "<<exponent<<endl;
+//	for (int b=0;b<ntemps;b++)
+//	{
+//		QMC_Info qmc;
+//		qmc.init(L,nsites,tminKelvin*pow(exponent,double(b)),measure_corrs);
+//		infos.push_back(qmc);
+//		cout<<"Beta = "<<infos[b].beta<<endl;
+//		if (start_config=="random") make_random_config(nsites,infos[b].configx,infos[b].configy,infos[b].configz); 
+//		if (start_config=="111")    make_111_config(nsites,infos[b].configx,infos[b].configy,infos[b].configz); 
+//		if (start_config=="x")      make_x_config(nsites,infos[b].configx,infos[b].configy,infos[b].configz);
+//	}
+//	//Matrix phases;
+//	//make_phases(fullcoords,infos[0].qvals,phases);
+//
+//	for (int b=0;b<ntemps;b++)
+//	{
+//		//if (measure_corrs) correlations(spin,configx,configy,configz,sxsxcorrs,sysycorrs,szszcorrs,sxsycorrs,sxszcorrs,syszcorrs);
+//		double 		    energyj=total_j_energy(spin, infos[b].configx,infos[b].configy,infos[b].configz,
+//								 neighbors,nneighbors,
+//							   	 Jmat01, Jmat10, 
+//							   	 Jmat02, Jmat20, 
+//							   	 Jmat03, Jmat30, 
+//							   	 Jmat12, Jmat21, 
+//							   	 Jmat13, Jmat31, 
+//							   	 Jmat23, Jmat32, Jnnn, bond_disorder_matrix, ijkt);
+//		double 		    energyh=total_h_energy(spin, infos[b].configx, infos[b].configy, infos[b].configz, 
+//							   hx,hy,hz, gmats , ijkt);
+//		std::vector<double> magnetization=total_magnetization(spin, infos[b].configx, infos[b].configy, infos[b].configz, 
+//								      gmats, ijkt);
+//		infos[b].energy=energyj+energyh;
+//		infos[b].mx=magnetization[0];infos[b].my=magnetization[1];infos[b].mz=magnetization[2];
+//		cout<<"Total J energy                  ="<<energyj<<endl;
+//		cout<<"Total h energy                  ="<<energyh<<endl;
+//		cout<<"Total J energy + total h energy ="<<infos[b].energy<<endl;
+//		cout<<"Total magnetization is          ="<<endl; print_vec_acc(magnetization,true);
+//	}
+//
+//	cout<<endl;	
+//	cout<<endl;	
+//	cout<<"========================================================"<<endl;
+//	cout<<"Energy history "<<endl;	
+//	/////////////////////////////////////////////////////////////////////////
+//	double nreplicatries=0.0;
+//	for (int64_t n=0; n<(nsamples+(nburn));n++)
+//	{
+//	   if (n%nsites!=0 or ntemps==1) // Do usual Metropolis MC
+//	   {
+//			///////////////////////////////////////////////////////////////////////
+//			// Usual Moves of a serial Metropolis Monte Carlo
+//			///////////////////////////////////////////////////////////////////////
+//			std::vector<double> rnd1,rnd2,rnd3,rnd4;
+//			std::vector<int> rndints;
+//		        // random numbers generated in advance
+//			for (int b=0;b<ntemps;b++)
+//			{
+//				bool cond=false;
+//				double r1,r2,d1,d2;
+//				while (cond==false) // Problem if fixed random numbers given !!!!!!!!!
+//				{
+//					r1=uniform_rnd();
+//					r2=uniform_rnd();
+//					d1=(2.0*r1 - 1);	
+//					d2=(2.0*r2 - 1);	
+//					if (d1*d1 + d2*d2 <=1.0) cond=true; 
+//				}
+//				rnd1.push_back(r1);
+//				rnd2.push_back(r2);
+//				// First 2 rnds are drawn in a circle for the conical move to work
+//				rnd3.push_back(uniform_rnd());
+//				rnd4.push_back(uniform_rnd());
+//				rndints.push_back(uniform_rand_int(0,nsites));
+//			}
+//			# pragma omp parallel for
+//			for (int b=0;b<ntemps;b++)
+//			{
+//					// Very Small moves needed at low temperatures to increase acceptance rates
+//					//double move_size=min(0.3,0.1*(infos[0].beta)/(infos[b].beta));  
+//					double move_size=0.2;  
+//					// Choose random site
+//					int site=rndints[b];
+//					int t=ijkt[site][3];
+//					double sxnew,synew,sznew;
+//					// Current sx,sy,sz on chosen site
+//					double sx=infos[b].configx[site];double sy=infos[b].configy[site];double sz=infos[b].configz[site];						// Choose a completely random direction - This is INEFFICENT at low temps
+//					//if (mcmove=="random")  random_move_continuous_spin(sxnew,synew,sznew);
+//					// Choose a completely random direction within a cone
+//					if (mcmove=="conical") conical_move_continuous_spin_rnds_provided(move_size,rnd1[b],rnd2[b],sx,sy,sz,sxnew,synew,sznew);
+//					//if (mcmove=="infDspecial")    infD_move_special_continuous_spin(sx,sy,sz,sxnew,synew,sznew);
+//					/*if (mcmove=="largeD")
+//					{
+//						double tempnum=rnd1[b];
+//						if (tempnum>0.5) conical_move_continuous_spin(move_size,sx,sy,sz,sxnew,synew,sznew);
+//						else	         big_move_continuous_spin(sx,sy,sz,sxnew,synew,sznew);
+//					}*/	
+//					// Normalize new direction
+//					double norm=sqrt(sxnew*sxnew + synew*synew + sznew*sznew); 
+//					sxnew=sxnew/norm; synew=synew/norm; sznew=sznew/norm;
+//
+//					// Calculate local energy of old and new configs
+//					double eff_field_x, eff_field_y, eff_field_z;
+//					local_j_energy(spin, site,t,sx,sy,sz,
+//						       infos[b].configx,infos[b].configy,infos[b].configz, 
+//						       neighbors, nneighbors,
+//						       Jmat01,Jmat10, Jmat02,Jmat20, Jmat03, Jmat30, Jmat12, Jmat21, 
+//						       Jmat13,Jmat31, Jmat23, Jmat32, Jnnn, bond_disorder_matrix, ijkt,
+//						       eff_field_x, eff_field_y,eff_field_z);
+//					double local_energyj1=( (sx*eff_field_x) + (sy*eff_field_y)+ (sz*eff_field_z))*spin*spin; 
+//					double local_energyj2=( (sxnew*eff_field_x) + (synew*eff_field_y)+ (sznew*eff_field_z))*spin*spin; 
+//					double mxdiff=(sxnew-sx)*spin;	
+//					double mydiff=(synew-sy)*spin;
+//					double mzdiff=(sznew-sz)*spin;
+//							// Jterms                        // hterms - no field for now
+//					double ediff=(local_energyj2-local_energyj1); //+ (local_energyh2-local_energyh1);
+//					double beta; 
+//					beta=infos[b].beta;
+//					double prob=exp(-beta*ediff);
+//					double rand=rnd3[b]; // random number previously generated
+//					if (rand<prob) // Metropolis Accept-reject for a given temperature
+//					{
+//						if (n>(nburn)) infos[b].accept=infos[b].accept+1.0;
+//						// Reset configs to new configs, because accepted
+//						infos[b].configx[site]=sxnew;infos[b].configy[site]=synew;infos[b].configz[site]=sznew;
+//						infos[b].energy+=ediff;
+//						//if (infos[b].energy<elowest) elowest=infos[b].energy;
+//						infos[b].mx+=mxdiff;infos[b].my+=mydiff;infos[b].mz+=mzdiff;
+//						/*for (int i=0;i<infos[b].numqs;i++)
+//						{
+//							infos[b].sxq[i]+=(mxdiff*phases(i,site));
+//							infos[b].syq[i]+=(mydiff*phases(i,site));
+//							infos[b].szq[i]+=(mzdiff*phases(i,site));
+//						}*/
+//					}
+//					else
+//					{
+//					       	if (n>(nburn)) infos[b].reject=infos[b].reject+1.0;
+//						// Still move spin if rejected, but this conserves energy!!
+//						double norm=(eff_field_x*eff_field_x)+(eff_field_y*eff_field_y)+(eff_field_z*eff_field_z);
+//						norm=sqrt(norm);
+//						eff_field_x=eff_field_x/norm;
+//						eff_field_y=eff_field_y/norm;
+//						eff_field_z=eff_field_z/norm;
+//						double costheta=(sx*eff_field_x)+(sy*eff_field_y)+(sz*eff_field_z);
+//						double sintheta=sqrt(1.0-(costheta*costheta));	
+//						double phi=rnd4[b]*2.0*3.14159; // random in range 0 to 2 pi 
+//										// random number previously generated
+//						double x1,y1,z1, x2,y2,z2;	
+//						get_two_normalized_orth_dirs(eff_field_x, eff_field_y, eff_field_z, 
+//		       							     x1, y1, z1, 
+//		       							     x2, y2, z2);
+//						double sxnew=(costheta*eff_field_x)  + (sintheta*cos(phi)*x1)+ (sintheta*sin(phi)*x2);
+//						double synew=(costheta*eff_field_y)  + (sintheta*cos(phi)*y1)+ (sintheta*sin(phi)*y2);
+//						double sznew=(costheta*eff_field_z)  + (sintheta*cos(phi)*z1)+ (sintheta*sin(phi)*z2);
+//						double mxdiff=(sxnew-sx)*spin;	
+//						double mydiff=(synew-sy)*spin;
+//						double mzdiff=(sznew-sz)*spin;
+//						infos[b].configx[site]=sxnew;infos[b].configy[site]=synew;infos[b].configz[site]=sznew;
+//						infos[b].mx+=mxdiff;infos[b].my+=mydiff;infos[b].mz+=mzdiff;
+//						/*for (int i=0;i<infos[b].numqs;i++)
+//						{
+//							infos[b].sxq[i]+=(mxdiff*phases(i,site));
+//							infos[b].syq[i]+=(mydiff*phases(i,site));
+//							infos[b].szq[i]+=(mzdiff*phases(i,site));
+//						}*/
+//						// ediff=0 by construction!!
+//					}
+//			}
+//	}	
+//	else if (ntemps>1)  //50 % chance of doing replica exchange
+//	{
+//		nreplicatries+=1.0;	
+//		///////////////////////////////////////////////////////////////////////
+//		////////// Attempted exchange moves of parallel tempering
+//		///////////////////////////////////////////////////////////////////////
+//		// Metropolis move done, try swapping every 2 sweeps
+//		for (int which1=0;which1<ntemps;which1++)
+//		{
+//			int which2=(which1+1)%(ntemps);
+//			// Slight bias, if i try to swap serially ?
+//			double rand=uniform_rnd();	
+//			double beta_i=infos[which1].beta;
+//			double beta_j=infos[which2].beta;
+//			double energy_i=infos[which1].energy;
+//			double energy_j=infos[which2].energy;
+//			double power=(beta_j-beta_i)*(energy_i - energy_j);
+//			double ratio=exp(-power);
+//			if (rand<ratio)
+//			{
+//				// SWAP quantities which are being saved
+//				std::vector<double> tempv;
+//				double temp_energy, temp_mx, temp_my, temp_mz;
+//				tempv=infos[which1].configx;	
+//				infos[which1].configx=infos[which2].configx;	
+//				infos[which2].configx=tempv;	
+//				
+//				tempv=infos[which1].configy;	
+//				infos[which1].configy=infos[which2].configy;	
+//				infos[which2].configy=tempv;	
+//
+//				tempv=infos[which1].configz;	
+//				infos[which1].configz=infos[which2].configz;	
+//				infos[which2].configz=tempv;	
+//				
+//				temp_energy=infos[which1].energy;	
+//				infos[which1].energy=infos[which2].energy;	
+//				infos[which2].energy=temp_energy;	
+//				
+//				temp_mx=infos[which1].mx;	
+//				infos[which1].mx=infos[which2].mx;	
+//				infos[which2].mx=temp_mx;	
+//				
+//				temp_my=infos[which1].my;	
+//				infos[which1].my=infos[which2].my;	
+//				infos[which2].my=temp_my;	
+//				
+//				temp_mz=infos[which1].mz;	
+//				infos[which1].mz=infos[which2].mz;	
+//				infos[which2].mz=temp_mz;
+//				infos[which1].nswaps+=1.0;	
+//				infos[which2].nswaps+=1.0;	
+//				//nswaps+=1.0;	
+//			}
+//		}
+//	}
+//	if (n%nsites==0 and n>nburn) 
+//	{
+//		#pragma omp parallel for 
+//		for (int num=0;num<infos.size();num++)
+//		{
+//			infos[num].update_totals();
+//		}
+//	}
+//	if (n%nsites==0 or n==nburn+nsamples-1) cout<<boost::format("%+ .5f") %infos[0].energy<<endl;
+//	}
+//	cout<<"========================================================"<<endl;
+//	cout<<endl;
+//	#pragma omp parallel for 
+//	for (int num=0;num<infos.size();num++)
+//	{
+//		infos[num].average();
+//	}
+//
+//	for (int num=0;num<infos.size();num++)
+//	{	
+//		cout<<"================================================================================"<<endl;
+//		cout<<"Nmeas    	= "<<boost::format("%+ .15f") %infos[num].nmeas<<endl;
+//		cout<<"accept    	= "<<boost::format("%+ .15f") %(infos[num].accept/(infos[num].accept+infos[num].reject))<<endl;
+//		cout<<"nswaps     	= "<<boost::format("%+ .15f") %(infos[num].nswaps/nreplicatries)<<endl;
+//		cout<<"mxavg     	= "<<boost::format("%+ .15f") %infos[num].mxavg<<endl;
+//		cout<<"myavg     	= "<<boost::format("%+ .15f") %infos[num].myavg<<endl;
+//		cout<<"mzavg     	= "<<boost::format("%+ .15f") %infos[num].mzavg<<endl;
+//		cout<<"mx2avg    	= "<<boost::format("%+ .15f") %infos[num].mx2avg<<endl;
+//		cout<<"my2avg    	= "<<boost::format("%+ .15f") %infos[num].my2avg<<endl;
+//		cout<<"mz2avg    	= "<<boost::format("%+ .15f") %infos[num].mz2avg<<endl;
+//		cout<<"mx4avg    	= "<<boost::format("%+ .15f") %infos[num].mx4avg<<endl;
+//		cout<<"my4avg    	= "<<boost::format("%+ .15f") %infos[num].my4avg<<endl;
+//		cout<<"mz4avg    	= "<<boost::format("%+ .15f") %infos[num].mz4avg<<endl;
+//		cout<<"eavg      	= "<<boost::format("%+ .15f") %infos[num].eavg<<endl;
+//		cout<<"e2avg     	= "<<boost::format("%+ .15f") %infos[num].e2avg<<endl;
+//		cout<<"e4avg     	= "<<boost::format("%+ .15f") %infos[num].e4avg<<endl;
+//		cout<<"T (K)        	= "<<boost::format("%+ .15f") %infos[num].tempKelvin<<endl;
+//		cout<<"Cv        	= "<<boost::format("%+ .15f") %infos[num].spheat<<endl;
+//		cout<<"Cv/Ni(J/molK)	= "<<boost::format("%+ .15f") %infos[num].spheatpersite<<endl;
+//		cout<<"Cvps(no dim)	= "<<boost::format("%+ .15f") %infos[num].spheatpersitenodim<<endl;
+//		cout<<"================================================================================"<<endl;
+//	}
+//}
+//
+//
+//void mc_pyrochlore_pt(double spin, int L,int64_t nsamples, int64_t nburn, string start_config, 
+//		   string mcmove, double temp, int ntemps, double hx, double hy, double hz, 
+//		   double J1, double J2, double J3, double J4, double Jnnn,
+//		   double disorder_strength,
+//		   double gxy, double gz, 
+//		   double & eavg, 
+//		   double &mxavg, double &myavg, double &mzavg, double &e2avg, 
+//		   double &mx2avg, double &my2avg, double &mz2avg, bool &measure_corrs)
+//{
+//	/////////////////////////////////////////////////////////////////////////
+//	// MC related quantities
+//	// Units - Assume J in meV (millielectron volts)
+//        //         Assume h in T   (tesla)
+//        //         Convert h to meV units in total_h_energy and local_h_energy
+//        // Convert temperature in Kelvin to temperature in meV
+//	// Set 16xLxLxL pyrochlore lattice
+//	int nsites=16*L*L*L;
+//       	double kB=1.38064852*1e-23;
+//        double NA=6.02214179*1e23;
+//        double JpermeV=1.60218*1e-22; 
+//	double tempKelvin=temp;
+//        temp=tempKelvin*0.08621738;
+//
+//	/////////////////////////////////////////////////////////////////////////
+//	// J and g matrices
+//	
+//	RMatrix Jmat01,Jmat02,Jmat03,Jmat12,Jmat13,Jmat23;
+//	RMatrix Jmat10,Jmat20,Jmat30,Jmat21,Jmat31,Jmat32;
+//	RMatrix gmat0,gmat1,gmat2,gmat3; 
+//        RMatrix bond_disorder_matrix(nsites,nsites);
+//	// Given J1, J2, J3, J4 - make J mats 
+//	make_J_mats(J1,J2,J3,J4,Jmat01,Jmat10, Jmat02, Jmat20, Jmat03, Jmat30, Jmat12, Jmat21, Jmat13, Jmat31, Jmat23, Jmat32);
+//	// Given g's - make g mats 
+//	make_g_mats(gxy,gz,gmat0,gmat1,gmat2,gmat3);
+//	std::vector<RMatrix> gmats;
+//	gmats.push_back(gmat0);gmats.push_back(gmat1);gmats.push_back(gmat2);gmats.push_back(gmat3);
+//
+//	/////////////////////////////////////////////////////////////////////////
+//	// MC related quantities
+//	// Set nburn
+//	nburn=nsamples;
+//	cout<<"Nsamples = "<<nsamples<<endl;
+//	cout<<"Nburn    = "<<nburn<<endl;
+//	double e4avg,mx4avg,my4avg,mz4avg;
+//	
+//	/////////////////////////////////////////////////////////////////////////
+//	// Set 16xLxLxL pyrochlore lattice
+//	std::vector< std::vector<int> > neighbors(nsites);	
+//	std::vector< std::vector<int> > nneighbors(nsites);	
+//	std::vector< std::vector<double> > fullcoords;	
+//	std::vector< std::vector<int> > ijkt;	
+//        make_pyrochlore(L,fullcoords,ijkt,neighbors,nneighbors,measure_corrs);
+//	// Make disorder matrix to be added to the Heisenberg couplings 
+//	// Till here the seed will give the same sequence of random numbers
+//        make_bond_disorder_matrix(disorder_strength,neighbors,bond_disorder_matrix);
+//	
+//	/////////////////////////////////////////////////////////////////////////
+//	// Make random configuration of spins or selected type 
+//	std::vector<QMC_Info> infos;
+//	cout<<"Ntemps   = "<<ntemps<<endl;
+//	double tmax=2.0;
+//	double tmin=tempKelvin;
+//	double tmax_over_tmin=tmax/tmin;
+//
+//	double exponent=pow(tmax_over_tmin,1.0/double(ntemps));
+//	cout<<"exponent = "<<exponent<<endl;
+//	for (int b=0;b<ntemps;b++)
+//	{
+//		QMC_Info qmc;
+//		qmc.init(L,nsites,tempKelvin*pow(exponent,double(b)),measure_corrs);
+//		infos.push_back(qmc);
+//		cout<<"Beta = "<<infos[b].beta<<endl;
+//		if (start_config=="random") make_random_config(nsites,infos[b].configx,infos[b].configy,infos[b].configz); 
+//		if (start_config=="111")    make_111_config(nsites,infos[b].configx,infos[b].configy,infos[b].configz); 
+//		if (start_config=="x")      make_x_config(nsites,infos[b].configx,infos[b].configy,infos[b].configz);
+//	}
+//	//Matrix phases;
+//	//make_phases(fullcoords,infos[0].qvals,phases);
+//
+//	for (int b=0;b<ntemps;b++)
+//	{
+//		//if (measure_corrs) correlations(spin,configx,configy,configz,sxsxcorrs,sysycorrs,szszcorrs,sxsycorrs,sxszcorrs,syszcorrs);
+//		double 		    energyj=total_j_energy(spin, infos[b].configx,infos[b].configy,infos[b].configz,
+//								 neighbors,nneighbors,
+//							   	 Jmat01, Jmat10, 
+//							   	 Jmat02, Jmat20, 
+//							   	 Jmat03, Jmat30, 
+//							   	 Jmat12, Jmat21, 
+//							   	 Jmat13, Jmat31, 
+//							   	 Jmat23, Jmat32, Jnnn, bond_disorder_matrix, ijkt);
+//		double 		    energyh=total_h_energy(spin, infos[b].configx, infos[b].configy, infos[b].configz, 
+//							   hx,hy,hz, gmats , ijkt);
+//		std::vector<double> magnetization=total_magnetization(spin, infos[b].configx, infos[b].configy, infos[b].configz, 
+//								      gmats, ijkt);
+//		infos[b].energy=energyj+energyh;
+//		infos[b].mx=magnetization[0];infos[b].my=magnetization[1];infos[b].mz=magnetization[2];
+//		cout<<"Total J energy                  ="<<energyj<<endl;
+//		cout<<"Total h energy                  ="<<energyh<<endl;
+//		cout<<"Total J energy + total h energy ="<<infos[b].energy<<endl;
+//		cout<<"Total magnetization is          ="<<endl; print_vec_acc(magnetization,true);
+//	}
+//
+//	cout<<endl;	
+//	cout<<endl;	
+//	cout<<"========================================================"<<endl;
+//	cout<<"Energy history "<<endl;	
+//	/////////////////////////////////////////////////////////////////////////
+//	// Accept reject Metropolis
+//	double accept=0.0;
+//	double reject=0.0;
+//	double nswaps=0.0;
+//	double nreplicatries=0.0;
+//	double elowest=0.0;
+//	
+//	for (int64_t n=0; n<(nsamples+(nburn));n++)
+//	{
+//	   if (n%nsites!=0 or ntemps==1) // Do usual Metropolis MC
+//	   {
+//			///////////////////////////////////////////////////////////////////////
+//			// Usual Moves of a serial Metropolis Monte Carlo
+//			///////////////////////////////////////////////////////////////////////
+//			std::vector<double> rnd1,rnd2,rnd3,rnd4;
+//			std::vector<int> rndints;
+//		        // random numbers generated in advance
+//			for (int b=0;b<ntemps;b++)
+//			{
+//				bool cond=false;
+//				double r1,r2,d1,d2;
+//				while (cond==false) // Problem if fixed random numbers given !!!!!!!!!
+//				{
+//					r1=uniform_rnd();
+//					r2=uniform_rnd();
+//					d1=(2.0*r1 - 1);	
+//					d2=(2.0*r2 - 1);	
+//					if (d1*d1 + d2*d2 <=1.0) cond=true; 
+//				}
+//				rnd1.push_back(r1);
+//				rnd2.push_back(r2);
+//				// First 2 rnds are drawn in a circle for the conical move to work
+//				rnd3.push_back(uniform_rnd());
+//				rnd4.push_back(uniform_rnd());
+//				rndints.push_back(uniform_rand_int(0,nsites));
+//			}
+//			# pragma omp parallel for
+//			for (int b=0;b<ntemps;b++)
+//			{
+//					// Very Small moves needed at low temperatures to increase acceptance rates
+//					double move_size=min(0.3,0.1*(infos[0].beta)/(infos[b].beta));  
+//					// Choose random site
+//					int site=rndints[b];
+//					int t=ijkt[site][3];
+//					double sxnew,synew,sznew;
+//					// Current sx,sy,sz on chosen site
+//					double sx=infos[b].configx[site];double sy=infos[b].configy[site];double sz=infos[b].configz[site];						// Choose a completely random direction - This is INEFFICENT at low temps
+//					//if (mcmove=="random")  random_move_continuous_spin(sxnew,synew,sznew);
+//					// Choose a completely random direction within a cone
+//					if (mcmove=="conical") conical_move_continuous_spin_rnds_provided(move_size,rnd1[b],rnd2[b],sx,sy,sz,sxnew,synew,sznew);
+//					//if (mcmove=="infDspecial")    infD_move_special_continuous_spin(sx,sy,sz,sxnew,synew,sznew);
+//					/*if (mcmove=="largeD")
+//					{
+//						double tempnum=rnd1[b];
+//						if (tempnum>0.5) conical_move_continuous_spin(move_size,sx,sy,sz,sxnew,synew,sznew);
+//						else	         big_move_continuous_spin(sx,sy,sz,sxnew,synew,sznew);
+//					}*/	
+//					// Normalize new direction
+//					double norm=sqrt(sxnew*sxnew + synew*synew + sznew*sznew); 
+//					sxnew=sxnew/norm; synew=synew/norm; sznew=sznew/norm;
+//
+//					// Calculate local energy of old and new configs
+//					double eff_field_x, eff_field_y, eff_field_z;
+//					local_j_energy(spin, site,t,sx,sy,sz,
+//						       infos[b].configx,infos[b].configy,infos[b].configz, 
+//						       neighbors, nneighbors,
+//						       Jmat01,Jmat10, Jmat02,Jmat20, Jmat03, Jmat30, Jmat12, Jmat21, 
+//						       Jmat13,Jmat31, Jmat23, Jmat32, Jnnn, bond_disorder_matrix, ijkt,
+//						       eff_field_x, eff_field_y,eff_field_z);
+//					double local_energyj1=( (sx*eff_field_x) + (sy*eff_field_y)+ (sz*eff_field_z))*spin*spin; 
+//					double local_energyj2=( (sxnew*eff_field_x) + (synew*eff_field_y)+ (sznew*eff_field_z))*spin*spin; 
+//					double mxdiff=(sxnew-sx)*spin;	
+//					double mydiff=(synew-sy)*spin;
+//					double mzdiff=(sznew-sz)*spin;
+//							// Jterms                        // hterms - no field for now
+//					double ediff=(local_energyj2-local_energyj1); //+ (local_energyh2-local_energyh1);
+//					double beta; 
+//					beta=infos[b].beta;
+//					double prob=exp(-beta*ediff);
+//					double rand=rnd3[b]; // random number previously generated
+//					if (rand<prob) // Metropolis Accept-reject for a given temperature
+//					{
+//						if (b==0 and n>(nburn)) accept=accept+1.0;
+//						// Reset configs to new configs, because accepted
+//						infos[b].configx[site]=sxnew;infos[b].configy[site]=synew;infos[b].configz[site]=sznew;
+//						infos[b].energy+=ediff;
+//						//if (infos[b].energy<elowest) elowest=infos[b].energy;
+//						infos[b].mx+=mxdiff;infos[b].my+=mydiff;infos[b].mz+=mzdiff;
+//						/*for (int i=0;i<infos[b].numqs;i++)
+//						{
+//							infos[b].sxq[i]+=(mxdiff*phases(i,site));
+//							infos[b].syq[i]+=(mydiff*phases(i,site));
+//							infos[b].szq[i]+=(mzdiff*phases(i,site));
+//						}*/
+//					}
+//					else
+//					{
+//					       	if (b==0 and n>(nburn)) reject=reject+1.0;
+//						// Still move spin if rejected, but this conserves energy!!
+//						double norm=(eff_field_x*eff_field_x)+(eff_field_y*eff_field_y)+(eff_field_z*eff_field_z);
+//						norm=sqrt(norm);
+//						eff_field_x=eff_field_x/norm;
+//						eff_field_y=eff_field_y/norm;
+//						eff_field_z=eff_field_z/norm;
+//						double costheta=(sx*eff_field_x)+(sy*eff_field_y)+(sz*eff_field_z);
+//						double sintheta=sqrt(1.0-(costheta*costheta));	
+//						double phi=rnd4[b]*2.0*3.14159; // random in range 0 to 2 pi 
+//										// random number previously generated
+//						double x1,y1,z1, x2,y2,z2;	
+//						get_two_normalized_orth_dirs(eff_field_x, eff_field_y, eff_field_z, 
+//		       							     x1, y1, z1, 
+//		       							     x2, y2, z2);
+//						double sxnew=(costheta*eff_field_x)  + (sintheta*cos(phi)*x1)+ (sintheta*sin(phi)*x2);
+//						double synew=(costheta*eff_field_y)  + (sintheta*cos(phi)*y1)+ (sintheta*sin(phi)*y2);
+//						double sznew=(costheta*eff_field_z)  + (sintheta*cos(phi)*z1)+ (sintheta*sin(phi)*z2);
+//						double mxdiff=(sxnew-sx)*spin;	
+//						double mydiff=(synew-sy)*spin;
+//						double mzdiff=(sznew-sz)*spin;
+//						infos[b].configx[site]=sxnew;infos[b].configy[site]=synew;infos[b].configz[site]=sznew;
+//						infos[b].mx+=mxdiff;infos[b].my+=mydiff;infos[b].mz+=mzdiff;
+//						/*for (int i=0;i<infos[b].numqs;i++)
+//						{
+//							infos[b].sxq[i]+=(mxdiff*phases(i,site));
+//							infos[b].syq[i]+=(mydiff*phases(i,site));
+//							infos[b].szq[i]+=(mzdiff*phases(i,site));
+//						}*/
+//						// ediff=0 by construction!!
+//					}
+//			}
+//	}	
+//	else if (ntemps>1)  //50 % chance of doing replica exchange
+//	{
+//		nreplicatries+=1.0;	
+//		///////////////////////////////////////////////////////////////////////
+//		////////// Attempted exchange moves of parallel tempering
+//		///////////////////////////////////////////////////////////////////////
+//		// Metropolis move done, try swapping every 2 sweeps
+//		for (int which1=0;which1<ntemps;which1++)
+//		{
+//			int which2=(which1+1)%(ntemps);
+//			// Slight bias, if i try to swap serially ?
+//			double rand=uniform_rnd();	
+//			double beta_i=infos[which1].beta;
+//			double beta_j=infos[which2].beta;
+//			double energy_i=infos[which1].energy;
+//			double energy_j=infos[which2].energy;
+//			double power=(beta_j-beta_i)*(energy_i - energy_j);
+//			double ratio=exp(-power);
+//			if (rand<ratio)
+//			{
+//				// SWAP quantities which are being saved
+//				std::vector<double> tempv;
+//				double temp_energy, temp_mx, temp_my, temp_mz;
+//				tempv=infos[which1].configx;	
+//				infos[which1].configx=infos[which2].configx;	
+//				infos[which2].configx=tempv;	
+//				
+//				tempv=infos[which1].configy;	
+//				infos[which1].configy=infos[which2].configy;	
+//				infos[which2].configy=tempv;	
+//
+//				tempv=infos[which1].configz;	
+//				infos[which1].configz=infos[which2].configz;	
+//				infos[which2].configz=tempv;	
+//				
+//				temp_energy=infos[which1].energy;	
+//				infos[which1].energy=infos[which2].energy;	
+//				infos[which2].energy=temp_energy;	
+//				
+//				temp_mx=infos[which1].mx;	
+//				infos[which1].mx=infos[which2].mx;	
+//				infos[which2].mx=temp_mx;	
+//				
+//				temp_my=infos[which1].my;	
+//				infos[which1].my=infos[which2].my;	
+//				infos[which2].my=temp_my;	
+//				
+//				temp_mz=infos[which1].mz;	
+//				infos[which1].mz=infos[which2].mz;	
+//				infos[which2].mz=temp_mz;
+//				if (which1==0 or which2==0) nswaps+=1.0;	
+//				//nswaps+=1.0;	
+//			}
+//		}
+//	}
+//	if (n%nsites==0 and n>nburn) infos[0].update_totals();
+//	if (n%nsites==0 or n==nburn+nsamples-1) cout<<boost::format("%+ .5f") %infos[0].energy<<endl;
+//	}
+//	cout<<"========================================================"<<endl;
+//	cout<<endl;
+//	accept=accept/(accept+reject);
+//	nswaps=nswaps/nreplicatries;
+//	infos[0].average();
+//	cout<<"elowest    	= "<<boost::format("%+ .15f") %elowest<<endl;
+//	cout<<"Nmeas    	= "<<boost::format("%+ .15f") %infos[0].nmeas<<endl;
+//	cout<<"accept    	= "<<boost::format("%+ .15f") %accept<<endl;
+//	cout<<"nswaps (0)    	= "<<boost::format("%+ .15f") %nswaps<<endl;
+//	cout<<"mxavg     	= "<<boost::format("%+ .15f") %infos[0].mxavg<<endl;
+//	cout<<"myavg     	= "<<boost::format("%+ .15f") %infos[0].myavg<<endl;
+//	cout<<"mzavg     	= "<<boost::format("%+ .15f") %infos[0].mzavg<<endl;
+//	cout<<"mx2avg    	= "<<boost::format("%+ .15f") %infos[0].mx2avg<<endl;
+//	cout<<"my2avg    	= "<<boost::format("%+ .15f") %infos[0].my2avg<<endl;
+//	cout<<"mz2avg    	= "<<boost::format("%+ .15f") %infos[0].mz2avg<<endl;
+//	cout<<"mx4avg    	= "<<boost::format("%+ .15f") %infos[0].mx4avg<<endl;
+//	cout<<"my4avg    	= "<<boost::format("%+ .15f") %infos[0].my4avg<<endl;
+//	cout<<"mz4avg    	= "<<boost::format("%+ .15f") %infos[0].mz4avg<<endl;
+//	cout<<"eavg      	= "<<boost::format("%+ .15f") %infos[0].eavg<<endl;
+//	cout<<"e2avg     	= "<<boost::format("%+ .15f") %infos[0].e2avg<<endl;
+//	cout<<"e4avg     	= "<<boost::format("%+ .15f") %infos[0].e4avg<<endl;
+//	cout<<"Cv        	= "<<boost::format("%+ .15f") %infos[0].spheat<<endl;
+//	cout<<"Cv/Ni(J/molK)	= "<<boost::format("%+ .15f") %infos[0].spheatpersite<<endl;
+//	cout<<"Cvps(no dim)	= "<<boost::format("%+ .15f") %infos[0].spheatpersitenodim<<endl;
+//}
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+//void mc_pyrochlore_groundstate(double spin, int L,int64_t nsamples, int64_t nburn, int wait, string start_config, 
+//		   string mcmove, double temp, int ntemps, double hx, double hy, double hz, 
+//		   double J1, double J2, double J3, double J4, double Jnnn,
+//		   double disorder_strength,
+//		   double gxy, double gz, 
+//		   double & eavg, 
+//		   double &mxavg, double &myavg, double &mzavg, double &e2avg, 
+//		   double &mx2avg, double &my2avg, double &mz2avg, bool &measure_corrs)
+//{
+//	/////////////////////////////////////////////////////////////////////////
+//	// MC related quantities
+//	// Units - Assume J in meV (millielectron volts)
+//        //         Assume h in T   (tesla)
+//        //         Convert h to meV units in total_h_energy and local_h_energy
+//        // Convert temperature in Kelvin to temperature in meV
+//	// Set 16xLxLxL pyrochlore lattice
+//	int nsites=16*L*L*L;
+//       	double kB=1.38064852*1e-23;
+//        double NA=6.02214179*1e23;
+//        double JpermeV=1.60218*1e-22; 
+//	double tempKelvin=temp;
+//        temp=tempKelvin*0.08621738;
+//
+//	/////////////////////////////////////////////////////////////////////////
+//	// J and g matrices
+//	
+//	RMatrix Jmat01,Jmat02,Jmat03,Jmat12,Jmat13,Jmat23;
+//	RMatrix Jmat10,Jmat20,Jmat30,Jmat21,Jmat31,Jmat32;
+//	RMatrix gmat0,gmat1,gmat2,gmat3; 
+//        RMatrix bond_disorder_matrix(nsites,nsites);
+//	// Given J1, J2, J3, J4 - make J mats 
+//	make_J_mats(J1,J2,J3,J4,Jmat01,Jmat10, Jmat02, Jmat20, Jmat03, Jmat30, Jmat12, Jmat21, Jmat13, Jmat31, Jmat23, Jmat32);
+//	// Given g's - make g mats 
+//	make_g_mats(gxy,gz,gmat0,gmat1,gmat2,gmat3);
+//	std::vector<RMatrix> gmats;
+//	gmats.push_back(gmat0);gmats.push_back(gmat1);gmats.push_back(gmat2);gmats.push_back(gmat3);
+//
+//	/////////////////////////////////////////////////////////////////////////
+//	// MC related quantities
+//	// Set nburn
+//	nburn=1;
+//	cout<<"Nsamples = "<<nsamples<<endl;
+//	cout<<"Nburn    = "<<nburn<<endl;
+//	cout<<"Wait     = "<<wait<<endl;
+//	double e4avg,mx4avg,my4avg,mz4avg;
+//	
+//	/////////////////////////////////////////////////////////////////////////
+//	// Set 16xLxLxL pyrochlore lattice
+//	std::vector< std::vector<int> > neighbors(nsites);	
+//	std::vector< std::vector<int> > nneighbors(nsites);	
+//	std::vector< std::vector<double> > fullcoords;	
+//	std::vector< std::vector<int> > ijkt;	
+//        make_pyrochlore(L,fullcoords,ijkt,neighbors,nneighbors,measure_corrs);
+//	// Make disorder matrix to be added to the Heisenberg couplings 
+//	// Till here the seed will give the same sequence of random numbers
+//        make_bond_disorder_matrix(disorder_strength,neighbors,bond_disorder_matrix);
+//	
+//	// Now we EFFECTIVELY want a different seed. So we introduce a wait parameter
+//	// which skips wait random numbers
+//	//
+//	//
+//	for (int n=0;n<wait;n++) double r=uniform_rnd();
+//	/////////////////////////////////////////////////////////////////////////
+//	// Make random configuration of spins or selected type 
+//	std::vector<QMC_Info> infos;
+//	cout<<"Ntemps   = "<<ntemps<<endl;
+//	double exponent=pow(100.0,1.0/double(ntemps)); // Tmax/Tmin=30
+//	cout<<"exponent = "<<exponent<<endl;
+//	for (int b=0;b<ntemps;b++)
+//	{
+//		QMC_Info qmc;
+//		qmc.init(L,nsites,tempKelvin*pow(exponent,double(b)),measure_corrs);
+//		infos.push_back(qmc);
+//		cout<<"Beta = "<<infos[b].beta<<endl;
+//		if (start_config=="random") make_random_config(nsites,infos[b].configx,infos[b].configy,infos[b].configz); 
+//		if (start_config=="111")    make_111_config(nsites,infos[b].configx,infos[b].configy,infos[b].configz); 
+//		if (start_config=="x")      make_x_config(nsites,infos[b].configx,infos[b].configy,infos[b].configz);
+//	}
+//	//Matrix phases;
+//	//make_phases(fullcoords,infos[0].qvals,phases);
+//
+//	for (int b=0;b<ntemps;b++)
+//	{
+//		//if (measure_corrs) correlations(spin,configx,configy,configz,sxsxcorrs,sysycorrs,szszcorrs,sxsycorrs,sxszcorrs,syszcorrs);
+//		double 		    energyj=total_j_energy(spin, infos[b].configx,infos[b].configy,infos[b].configz,
+//								 neighbors,nneighbors,
+//							   	 Jmat01, Jmat10, 
+//							   	 Jmat02, Jmat20, 
+//							   	 Jmat03, Jmat30, 
+//							   	 Jmat12, Jmat21, 
+//							   	 Jmat13, Jmat31, 
+//							   	 Jmat23, Jmat32, Jnnn, bond_disorder_matrix, ijkt);
+//		double 		    energyh=total_h_energy(spin, infos[b].configx, infos[b].configy, infos[b].configz, 
+//							   hx,hy,hz, gmats , ijkt);
+//		std::vector<double> magnetization=total_magnetization(spin, infos[b].configx, infos[b].configy, infos[b].configz, 
+//								      gmats, ijkt);
+//		infos[b].energy=energyj+energyh;
+//		infos[b].mx=magnetization[0];infos[b].my=magnetization[1];infos[b].mz=magnetization[2];
+//		cout<<"Total J energy                  ="<<energyj<<endl;
+//		cout<<"Total h energy                  ="<<energyh<<endl;
+//		cout<<"Total J energy + total h energy ="<<infos[b].energy<<endl;
+//		cout<<"Total magnetization is          ="<<endl; print_vec_acc(magnetization,true);
+//	}
+//
+//	cout<<endl;	
+//	cout<<endl;	
+//	cout<<"========================================================"<<endl;
+//	cout<<"Energy history "<<endl;	
+//	/////////////////////////////////////////////////////////////////////////
+//	// Accept reject Metropolis
+//	double accept=0.0;
+//	double reject=0.0;
+//	double nswaps=0.0;
+//	double nreplicatries=0.0;
+//	double elowest=0.0;
+//	
+//	for (int64_t n=0; n<(nsamples+(nburn));n++)
+//	{
+//	   if (n%nsites!=0 or ntemps==1) // Do usual Metropolis MC
+//	   {
+//			///////////////////////////////////////////////////////////////////////
+//			// Usual Moves of a serial Metropolis Monte Carlo
+//			///////////////////////////////////////////////////////////////////////
+//			std::vector<double> rnd1,rnd2,rnd3,rnd4;
+//			std::vector<int> rndints;
+//		        // random numbers generated in advance
+//			for (int b=0;b<ntemps;b++)
+//			{
+//				bool cond=false;
+//				double r1,r2,d1,d2;
+//				while (cond==false) // Problem if fixed random numbers given !!!!!!!!!
+//				{
+//					r1=uniform_rnd();
+//					r2=uniform_rnd();
+//					d1=(2.0*r1 - 1);	
+//					d2=(2.0*r2 - 1);	
+//					if (d1*d1 + d2*d2 <=1.0) cond=true; 
+//				}
+//				rnd1.push_back(r1);
+//				rnd2.push_back(r2);
+//				// First 2 rnds are drawn in a circle for the conical move to work
+//				rnd3.push_back(uniform_rnd());
+//				rnd4.push_back(uniform_rnd());
+//				rndints.push_back(uniform_rand_int(0,nsites));
+//			}
+//			# pragma omp parallel for
+//			for (int b=0;b<ntemps;b++)
+//			{
+//					// Very Small moves needed at low temperatures to increase acceptance rates
+//					double move_size=min(0.3,0.1*(infos[0].beta)/(infos[b].beta));  
+//					// Choose random site
+//					int site=rndints[b];
+//					int t=ijkt[site][3];
+//					double sxnew,synew,sznew;
+//					// Current sx,sy,sz on chosen site
+//					double sx=infos[b].configx[site];double sy=infos[b].configy[site];double sz=infos[b].configz[site];						// Choose a completely random direction - This is INEFFICENT at low temps
+//					//if (mcmove=="random")  random_move_continuous_spin(sxnew,synew,sznew);
+//					// Choose a completely random direction within a cone
+//					if (mcmove=="conical") conical_move_continuous_spin_rnds_provided(move_size,rnd1[b],rnd2[b],sx,sy,sz,sxnew,synew,sznew);
+//					//if (mcmove=="infDspecial")    infD_move_special_continuous_spin(sx,sy,sz,sxnew,synew,sznew);
+//					/*if (mcmove=="largeD")
+//					{
+//						double tempnum=rnd1[b];
+//						if (tempnum>0.5) conical_move_continuous_spin(move_size,sx,sy,sz,sxnew,synew,sznew);
+//						else	         big_move_continuous_spin(sx,sy,sz,sxnew,synew,sznew);
+//					}*/	
+//					// Normalize new direction
+//					double norm=sqrt(sxnew*sxnew + synew*synew + sznew*sznew); 
+//					sxnew=sxnew/norm; synew=synew/norm; sznew=sznew/norm;
+//
+//					// Calculate local energy of old and new configs
+//					double eff_field_x, eff_field_y, eff_field_z;
+//					local_j_energy(spin, site,t,sx,sy,sz,
+//						       infos[b].configx,infos[b].configy,infos[b].configz, 
+//						       neighbors, nneighbors,
+//						       Jmat01,Jmat10, Jmat02,Jmat20, Jmat03, Jmat30, Jmat12, Jmat21, 
+//						       Jmat13,Jmat31, Jmat23, Jmat32, Jnnn, bond_disorder_matrix, ijkt,
+//						       eff_field_x, eff_field_y,eff_field_z);
+//					double local_energyj1=( (sx*eff_field_x) + (sy*eff_field_y)+ (sz*eff_field_z))*spin*spin; 
+//					double local_energyj2=( (sxnew*eff_field_x) + (synew*eff_field_y)+ (sznew*eff_field_z))*spin*spin; 
+//					double mxdiff=(sxnew-sx)*spin;	
+//					double mydiff=(synew-sy)*spin;
+//					double mzdiff=(sznew-sz)*spin;
+//							// Jterms                        // hterms - no field for now
+//					double ediff=(local_energyj2-local_energyj1); //+ (local_energyh2-local_energyh1);
+//					double beta; 
+//					beta=infos[b].beta;
+//					double prob=exp(-beta*ediff);
+//					double rand=rnd3[b]; // random number previously generated
+//					if (rand<prob) // Metropolis Accept-reject for a given temperature
+//					{
+//						if (b==0 and n>(nburn)) accept=accept+1.0;
+//						// Reset configs to new configs, because accepted
+//						infos[b].configx[site]=sxnew;infos[b].configy[site]=synew;infos[b].configz[site]=sznew;
+//						infos[b].energy+=ediff;
+//						//if (infos[b].energy<elowest) elowest=infos[b].energy;
+//						infos[b].mx+=mxdiff;infos[b].my+=mydiff;infos[b].mz+=mzdiff;
+//						/*for (int i=0;i<infos[b].numqs;i++)
+//						{
+//							infos[b].sxq[i]+=(mxdiff*phases(i,site));
+//							infos[b].syq[i]+=(mydiff*phases(i,site));
+//							infos[b].szq[i]+=(mzdiff*phases(i,site));
+//						}*/
+//					}
+//					else
+//					{
+//					       	if (b==0 and n>(nburn)) reject=reject+1.0;
+//						// Still move spin if rejected, but this conserves energy!!
+//						double norm=(eff_field_x*eff_field_x)+(eff_field_y*eff_field_y)+(eff_field_z*eff_field_z);
+//						norm=sqrt(norm);
+//						eff_field_x=eff_field_x/norm;
+//						eff_field_y=eff_field_y/norm;
+//						eff_field_z=eff_field_z/norm;
+//						double costheta=(sx*eff_field_x)+(sy*eff_field_y)+(sz*eff_field_z);
+//						double sintheta=sqrt(1.0-(costheta*costheta));	
+//						double phi=rnd4[b]*2.0*3.14159; // random in range 0 to 2 pi 
+//										// random number previously generated
+//						double x1,y1,z1, x2,y2,z2;	
+//						get_two_normalized_orth_dirs(eff_field_x, eff_field_y, eff_field_z, 
+//		       							     x1, y1, z1, 
+//		       							     x2, y2, z2);
+//						double sxnew=(costheta*eff_field_x)  + (sintheta*cos(phi)*x1)+ (sintheta*sin(phi)*x2);
+//						double synew=(costheta*eff_field_y)  + (sintheta*cos(phi)*y1)+ (sintheta*sin(phi)*y2);
+//						double sznew=(costheta*eff_field_z)  + (sintheta*cos(phi)*z1)+ (sintheta*sin(phi)*z2);
+//						double mxdiff=(sxnew-sx)*spin;	
+//						double mydiff=(synew-sy)*spin;
+//						double mzdiff=(sznew-sz)*spin;
+//						infos[b].configx[site]=sxnew;infos[b].configy[site]=synew;infos[b].configz[site]=sznew;
+//						infos[b].mx+=mxdiff;infos[b].my+=mydiff;infos[b].mz+=mzdiff;
+//						/*for (int i=0;i<infos[b].numqs;i++)
+//						{
+//							infos[b].sxq[i]+=(mxdiff*phases(i,site));
+//							infos[b].syq[i]+=(mydiff*phases(i,site));
+//							infos[b].szq[i]+=(mzdiff*phases(i,site));
+//						}*/
+//						// ediff=0 by construction!!
+//					}
+//			}
+//	}	
+//	else if (ntemps>1)  //50 % chance of doing replica exchange
+//	{
+//		nreplicatries+=1.0;	
+//		///////////////////////////////////////////////////////////////////////
+//		////////// Attempted exchange moves of parallel tempering
+//		///////////////////////////////////////////////////////////////////////
+//		// Metropolis move done, try swapping every 2 sweeps
+//		for (int which1=0;which1<ntemps;which1++)
+//		{
+//			int which2=(which1+1)%(ntemps);
+//			// Slight bias, if i try to swap serially ?
+//			double rand=uniform_rnd();	
+//			double beta_i=infos[which1].beta;
+//			double beta_j=infos[which2].beta;
+//			double energy_i=infos[which1].energy;
+//			double energy_j=infos[which2].energy;
+//			double power=(beta_j-beta_i)*(energy_i - energy_j);
+//			double ratio=exp(-power);
+//			if (rand<ratio)
+//			{
+//				// SWAP quantities which are being saved
+//				std::vector<double> temp;
+//				double temp_energy, temp_mx, temp_my, temp_mz;
+//				temp=infos[which1].configx;	
+//				infos[which1].configx=infos[which2].configx;	
+//				infos[which2].configx=temp;	
+//				
+//				temp=infos[which1].configy;	
+//				infos[which1].configy=infos[which2].configy;	
+//				infos[which2].configy=temp;	
+//
+//				temp=infos[which1].configz;	
+//				infos[which1].configz=infos[which2].configz;	
+//				infos[which2].configz=temp;	
+//				
+//				temp_energy=infos[which1].energy;	
+//				infos[which1].energy=infos[which2].energy;	
+//				infos[which2].energy=temp_energy;	
+//				
+//				temp_mx=infos[which1].mx;	
+//				infos[which1].mx=infos[which2].mx;	
+//				infos[which2].mx=temp_mx;	
+//				
+//				temp_my=infos[which1].my;	
+//				infos[which1].my=infos[which2].my;	
+//				infos[which2].my=temp_my;	
+//				
+//				temp_mz=infos[which1].mz;	
+//				infos[which1].mz=infos[which2].mz;	
+//				infos[which2].mz=temp_mz;
+//				if (which1==0 or which2==0) nswaps+=1.0;	
+//				//nswaps+=1.0;	
+//			}
+//		}
+//	}
+//	if (n%nsites==0 or n==nburn+nsamples-1) cout<<boost::format("%+ .5f") %infos[0].energy<<endl;
+//	}
+//	cout<<"========================================================"<<endl;
+//	cout<<endl;
+//	accept=accept/(accept+reject);
+//	nswaps=nswaps/nreplicatries;
+//
+//	///////////////////////////////////////////////////////////////////////////////////////////
+//	cout<<"Started iterative minimization on lowest configurations in parallel"<<endl;
+//	for (int64_t n=0; n<(nsamples+(nburn));n++)
+//	{
+//		//cout<<"Started iterative minimzation for configuration number "<<b<<" at beta = "<<infos[b].beta<<endl;
+//		// random numbers generated in advance
+//		std::vector<double> rnd1;
+//		std::vector<int> rndints;
+//		for (int b=0;b<ntemps;b++)
+//		{
+//			rnd1.push_back(uniform_rnd());
+//			rndints.push_back(uniform_rand_int(0,nsites));
+//		}
+//		# pragma omp parallel for
+//		for (int b=0;b<min(100,ntemps);b++)
+//		{
+//			int site=rndints[b];
+//			double sx=infos[b].configx[site];
+//			double sy=infos[b].configy[site];
+//			double sz=infos[b].configz[site];
+//			int t=ijkt[site][3];
+//			// Calculate local energy of old and new configs
+//			double eff_field_x, eff_field_y, eff_field_z;
+//			local_j_energy(spin, site,t,sx,sy,sz,
+//			infos[b].configx,infos[b].configy,infos[b].configz, 
+//			neighbors, nneighbors,
+//			Jmat01,Jmat10, Jmat02,Jmat20, Jmat03, Jmat30, Jmat12, Jmat21, 
+//			Jmat13,Jmat31, Jmat23, Jmat32, Jnnn, bond_disorder_matrix, ijkt,
+//			eff_field_x, eff_field_y,eff_field_z);
+//			double norm=(eff_field_x*eff_field_x)+(eff_field_y*eff_field_y)+(eff_field_z*eff_field_z);
+//			norm=sqrt(norm);
+//			double r=0.5*rnd1[b];
+//			double sxnew=((-eff_field_x/norm))*r + sx ;
+//			double synew=((-eff_field_y/norm))*r + sy ;
+//			double sznew=((-eff_field_z/norm))*r + sz ;
+//			norm=(sxnew*sxnew) + (synew*synew) + (sznew*sznew);
+//			norm=sqrt(norm);
+//			sxnew=sxnew/norm; synew=synew/norm; sznew=sznew/norm;
+//			double local_energyj1=( (sx*eff_field_x) + (sy*eff_field_y)+ (sz*eff_field_z))*spin*spin; 
+//			double local_energyj2=( (sxnew*eff_field_x) + (synew*eff_field_y)+ (sznew*eff_field_z))*spin*spin; 
+//			infos[b].energy+=(local_energyj2-local_energyj1);
+//			infos[b].configx[site]=sxnew;
+//			infos[b].configy[site]=synew;
+//			infos[b].configz[site]=sznew;
+//			double mxdiff=(sxnew-sx)*spin;	
+//			double mydiff=(synew-sy)*spin;
+//			double mzdiff=(sznew-sz)*spin;
+//			infos[b].mx+=mxdiff;infos[b].my+=mydiff;infos[b].mz+=mzdiff;
+//		}
+//		if ((n%nsites==0 or n==nburn+nsamples-1) ) cout<<boost::format("%+ .5f") %infos[0].energy<<endl;
+//	}
+//
+//	for (int b=0;b<min(100,ntemps);b++)
+//	{	
+//		cout<<"========================================================================================================================="<<endl;
+//		cout<<"For configuration number "<<b<<" at beta = "<<infos[b].beta<<endl;
+//		cout<<"========================================================================================================================="<<endl;
+//		///////////////////////////////////////////////////////////////////////////////////////////
+//		fourier_transforms_slow(spin,fullcoords,infos[b].qvals,infos[b].configx,infos[b].configy,infos[b].configz,infos[b].sxq,infos[b].syq,infos[b].szq);
+//		infos[b].update_totals(); // Update totals - only last snapshot*/
+//		// Only the lowest temperature is relevant for averages we are interested in 
+//		infos[b].average();
+//
+//		std::vector<double> configx=infos[b].configx;
+//		std::vector<double> configy=infos[b].configy;
+//		std::vector<double> configz=infos[b].configz;
+//
+//		double invsqrt12=1.0/sqrt(12.0);
+//		cout<<"========================================================================================================================="<<endl;
+//		cout<<"    x            y             z             sx             sy             sz                                            "<<endl;
+//		cout<<"========================================================================================================================="<<endl;
+//		for (int i=0;i<nsites;i++) // Loop over all sites
+//		{
+//			cout<<boost::format("%+ .10f  %+ .10f  %+ .10f  %+ .10f   %+ .10f   %+ .10f") %fullcoords[i][0] %fullcoords[i][1] %fullcoords[i][2] %(configx[i]*spin) %(configy[i]*spin) %(configz[i]*spin) <<endl;
+//
+//		}
+//		cout<<endl;
+//		cout<<endl;
+//
+//		cout<<"========================================================================================================================="<<endl;
+//		cout<<"    s01            s02             s03             s12             s13             s23            f0             f1          f2"<<endl;
+//		cout<<"========================================================================================================================="<<endl;
+//		for (int i=0;i<nsites;i+=4) // Loop over all up tetrahedra
+//		{
+//			double s00=(configx[i]*configx[i])+(configy[i]*configy[i])+(configz[i]*configz[i]);
+//			double s01=(configx[i]*configx[i+1])+(configy[i]*configy[i+1])+(configz[i]*configz[i+1]);
+//			double s02=(configx[i]*configx[i+2])+(configy[i]*configy[i+2])+(configz[i]*configz[i+2]);
+//			double s03=(configx[i]*configx[i+3])+(configy[i]*configy[i+3])+(configz[i]*configz[i+3]);
+//			double s11=(configx[i+1]*configx[i+1])+(configy[i+1]*configy[i+1])+(configz[i+1]*configz[i+1]);
+//			double s12=(configx[i+1]*configx[i+2])+(configy[i+1]*configy[i+2])+(configz[i+1]*configz[i+2]);
+//			double s13=(configx[i+1]*configx[i+3])+(configy[i+1]*configy[i+3])+(configz[i+1]*configz[i+3]);
+//			double s22=(configx[i+2]*configx[i+2])+(configy[i+2]*configy[i+2])+(configz[i+2]*configz[i+2]);
+//			double s23=(configx[i+2]*configx[i+3])+(configy[i+2]*configy[i+3])+(configz[i+2]*configz[i+3]);
+//			double s33=(configx[i+3]*configx[i+3])+(configy[i+3]*configy[i+3])+(configz[i+3]*configz[i+3]);
+//
+//			double f0=((s00+s11+s22+s33)+(2.0*(s01+s02+s03+s12+s13+s23)))*spin*spin;
+//			double f1=(s03+s12+s13+s02-(2.0*s01)-(2.0*s23))*invsqrt12*spin*spin;
+//			double f2=((s13+s02-s03-s12)/2.0)*spin*spin;
+//			
+//			cout<<boost::format("%+ .10f  %+ .10f  %+ .10f  %+ .10f   %+ .10f   %+ .10f   %+ .10f   %+ .10f   %+ .10f") %s01 %s02 %s03 %s12 %s13 %s23 %f0 %f1 %f2<<endl;
+//
+//		}
+//		cout<<endl;
+//		cout<<endl;
+//
+//		//cout<<"elowest    	= "<<boost::format("%+ .15f") %elowest<<endl;
+//		cout<<"Nmeas    	= "<<boost::format("%+ .15f") %infos[b].nmeas<<endl;
+//		cout<<"accept    	= "<<boost::format("%+ .15f") %accept<<endl;
+//		cout<<"nswaps (0)    	= "<<boost::format("%+ .15f") %nswaps<<endl;
+//		cout<<"mxavg     	= "<<boost::format("%+ .15f") %infos[b].mxavg<<endl;
+//		cout<<"myavg     	= "<<boost::format("%+ .15f") %infos[b].myavg<<endl;
+//		cout<<"mzavg     	= "<<boost::format("%+ .15f") %infos[b].mzavg<<endl;
+//		cout<<"mx2avg    	= "<<boost::format("%+ .15f") %infos[b].mx2avg<<endl;
+//		cout<<"my2avg    	= "<<boost::format("%+ .15f") %infos[b].my2avg<<endl;
+//		cout<<"mz2avg    	= "<<boost::format("%+ .15f") %infos[b].mz2avg<<endl;
+//		cout<<"mx4avg    	= "<<boost::format("%+ .15f") %infos[b].mx4avg<<endl;
+//		cout<<"my4avg    	= "<<boost::format("%+ .15f") %infos[b].my4avg<<endl;
+//		cout<<"mz4avg    	= "<<boost::format("%+ .15f") %infos[b].mz4avg<<endl;
+//		cout<<"eavg      	= "<<boost::format("%+ .15f") %infos[b].eavg<<endl;
+//		cout<<"e2avg     	= "<<boost::format("%+ .15f") %infos[b].e2avg<<endl;
+//		cout<<"e4avg     	= "<<boost::format("%+ .15f") %infos[b].e4avg<<endl;
+//		cout<<"Cv        	= "<<boost::format("%+ .15f") %infos[b].spheat<<endl;
+//		cout<<"Cv/Ni(J/molK)	= "<<boost::format("%+ .15f") %infos[b].spheatpersite<<endl;
+//		cout<<"Cvps(no dim)	= "<<boost::format("%+ .15f") %infos[b].spheatpersitenodim<<endl;
+//		
+//		cout<<"========================================================================================================================="<<endl;
+//		cout<<" h      k      l     SXX(Q)    SXY(Q)    SXZ(Q)    SYX(Q)     SYY(Q)     SYZ(Q)     SZX(Q)     SZY(Q)     SZZ(Q)         "<<endl;
+//		cout<<"========================================================================================================================="<<endl;
+//		for (int i=0;i<infos[b].numqs;i++)
+//		{
+//		cout<<boost::format("%+ .5f  %+ .5f  %+ .5f  %+ .5f   %+ .5f   %+ .5f   %+ .5f   %+ .5f   %+ .5f  %+ .5f  %+ .5f %+ .5f") %infos[b].qvals[i][0] %infos[b].qvals[i][1] %infos[b].qvals[i][2] %infos[b].sxsxtot[i] %infos[b].sxsytot[i] %infos[b].sxsztot[i] %infos[b].sysxtot[i] %infos[b].sysytot[i] %infos[b].sysztot[i] %infos[b].szsxtot[i] %infos[b].szsytot[i] %infos[b].szsztot[i]<<endl;
+//			
+//		}
+//		cout<<endl;
+//		cout<<endl;
+//	}
+//
+//	
+//	// AVERAGED DATA	
+//	int numqs=infos[0].qvals.size();
+//	std::vector<complex<double> > allsxsxtot(numqs);
+//	std::vector<complex<double> > allsxsytot(numqs);
+//	std::vector<complex<double> > allsxsztot(numqs);
+//	
+//	std::vector<complex<double> > allsysxtot(numqs);
+//	std::vector<complex<double> > allsysytot(numqs);
+//	std::vector<complex<double> > allsysztot(numqs);
+//	
+//	std::vector<complex<double> > allszsxtot(numqs);
+//	std::vector<complex<double> > allszsytot(numqs);
+//	std::vector<complex<double> > allszsztot(numqs);
+//	
+//	for (int b=0;b<min(100,ntemps);b++)
+//	{
+//		#pragma omp parallel for
+//		for (int nq=0;nq<infos[b].qvals.size();nq++)
+//		{
+//			allsxsxtot[nq]+=infos[b].sxsxtot[nq];
+//			allsxsytot[nq]+=infos[b].sxsytot[nq];
+//			allsxsztot[nq]+=infos[b].sxsztot[nq];
+//		
+//			allsysxtot[nq]+=infos[b].sysxtot[nq];
+//			allsysytot[nq]+=infos[b].sysytot[nq];
+//			allsysztot[nq]+=infos[b].sysztot[nq];
+//			
+//			allszsxtot[nq]+=infos[b].szsxtot[nq];
+//			allszsytot[nq]+=infos[b].szsytot[nq];
+//			allszsztot[nq]+=infos[b].szsztot[nq];
+//		}
+//	}
+//
+//	int nconfigs=min(100,ntemps);
+//	
+//	#pragma omp parallel for
+//	for (int nq=0;nq<numqs;nq++)
+//	{
+//		allsxsxtot[nq]=allsxsxtot[nq]/double(nconfigs);
+//		allsxsytot[nq]=allsxsytot[nq]/double(nconfigs);
+//		allsxsztot[nq]=allsxsztot[nq]/double(nconfigs);
+//	
+//		allsysxtot[nq]=allsysxtot[nq]/double(nconfigs);
+//		allsysytot[nq]=allsysytot[nq]/double(nconfigs);
+//		allsysztot[nq]=allsysztot[nq]/double(nconfigs);
+//		
+//		allszsxtot[nq]=allszsxtot[nq]/double(nconfigs);
+//		allszsytot[nq]=allszsytot[nq]/double(nconfigs);
+//		allszsztot[nq]=allszsztot[nq]/double(nconfigs);
+//	}
+//	
+//	cout<<"========================================================================================================================="<<endl;
+//	cout<<"                                  AVERAGED  DATA                                                                         "<<endl;
+//	cout<<"========================================================================================================================="<<endl;
+//	cout<<" h      k      l     SXX(Q)    SXY(Q)    SXZ(Q)    SYX(Q)     SYY(Q)     SYZ(Q)     SZX(Q)     SZY(Q)     SZZ(Q)         "<<endl;
+//	cout<<"========================================================================================================================="<<endl;
+//	for (int i=0;i<numqs;i++)
+//	{
+//		cout<<boost::format("%+ .5f  %+ .5f  %+ .5f  %+ .5f   %+ .5f   %+ .5f   %+ .5f   %+ .5f   %+ .5f  %+ .5f  %+ .5f %+ .5f") %infos[0].qvals[i][0] %infos[0].qvals[i][1] %infos[0].qvals[i][2] %allsxsxtot[i] %allsxsytot[i] %allsxsztot[i] %allsysxtot[i] %allsysytot[i] %allsysztot[i] %allszsxtot[i] %allszsytot[i] %allszsztot[i]<<endl;
+//			
+//	}
+//}
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
